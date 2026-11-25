@@ -28,6 +28,7 @@
 #include <linux/kallsyms.h>
 #include <linux/kprobes.h>
 #include <linux/mm.h>
+#include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/preempt.h>
 #include <linux/printk.h>
@@ -451,17 +452,34 @@ static int fki_x86_resolve(void)
 {
 	static unsigned long (*lookup)(const char *);
 	struct kprobe kp = { .symbol_name = "kallsyms_lookup_name" };
+	u32 insn;
+	unsigned long addr;
 
 	if (p_set_memory_x)
 		return 0;
 	if (!lookup) {
 		if (register_kprobe(&kp))
 			return -ENOENT;
-		lookup = (void *)kp.addr;
+		addr = (unsigned long)kp.addr;
 		unregister_kprobe(&kp);
+		/*
+		 * With IBT enabled, arch_adjust_kprobe_addr() moves kp.addr
+		 * past the function's ENDBR64 so that int3 can be planted
+		 * there.  That address is not a legal indirect-branch target:
+		 * calling it raises #CP ("Missing ENDBR").  Step back over the
+		 * ENDBR64 before calling, but only when it is really there.
+		 */
+		if (!copy_from_kernel_nofault(&insn, (void *)(addr - 4),
+		    sizeof(insn)) && insn == 0xfa1e0ff3U)
+			addr -= 4;
+		lookup = (void *)addr;
 	}
 	p_set_memory_x = (void *)lookup("set_memory_x");
-	return p_set_memory_x ? 0 : -ENOENT;
+	if (!p_set_memory_x)
+		return -ENOENT;
+	pr_info("fki-x86: set_memory_x=%pS via kallsyms_lookup_name=%pS\n",
+	    (void *)p_set_memory_x, (void *)lookup);
+	return 0;
 }
 
 int fki_x86_shared_alloc(unsigned long size, struct fki_region *r)
