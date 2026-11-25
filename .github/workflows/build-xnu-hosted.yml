@@ -85,7 +85,7 @@ jobs:
             # not match the regex below, so emit them first; the checks API
             # keeps only a limited number of annotations per run.
             {
-              grep -A5 -E 'duplicate symbol|Undefined symbols' "$LOG" || true
+              grep -A20 -E 'duplicate symbol|Undefined symbols|ERROR: built kernel not found' "$LOG" || true
               grep -E 'error:|ERROR:|fatal error:|undefined|not found|ld:|make.*Error' "$LOG" | tail -60 || true
             } | awk '!seen[$0]++' | while IFS= read -r line; do
               line=${line//$'%'/%25}

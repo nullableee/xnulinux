@@ -120,7 +120,14 @@ KERN=$(find "$SYMROOT" "$DSTROOT" -type f \( -name kernel -o -name 'kernel.devel
 if [ -z "$KERN" ]; then
 	KERN=$(find "$SYMROOT" "$DSTROOT" -type f -name 'kernel.development.unstripped*' -perm -u+x 2>/dev/null | head -1)
 fi
-[ -n "$KERN" ] || { echo "ERROR: built kernel not found" >&2; exit 1; }
+if [ -z "$KERN" ]; then
+	echo "ERROR: built kernel not found" >&2
+	echo "SYMROOT kernel candidates:" >&2
+	find "$SYMROOT" -type f -name 'kernel*' -print 2>/dev/null | head -50 >&2
+	echo "DSTROOT kernel candidates:" >&2
+	find "$DSTROOT" -type f -name 'kernel*' -print 2>/dev/null | head -50 >&2
+	exit 1
+fi
 cp "$KERN" "$OUT"
 chmod 644 "$OUT"
 echo "kernel: $KERN"
