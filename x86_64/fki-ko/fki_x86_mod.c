@@ -111,21 +111,35 @@ static void x86_save_state(struct fki_x86_state *s)
 	struct x86_desc_ptr idt, gdt;
 	u16 tr = 0;
 
+	/* Fine-grained breadcrumbs: the leave path can hang inside this
+	 * routine while CR3 is already Linux's, but before the Linux IDT
+	 * and GS/MSRs have been restored. The logger thread sees these. */
+	fki_x86_phase_set(50, (unsigned long)s);
 	s->cr3 = __read_cr3();
+	fki_x86_phase_set(51, s->cr3);
 	asm volatile ("sidt %0" : "=m" (idt));
+	fki_x86_phase_set(52, idt.base);
 	asm volatile ("sgdt %0" : "=m" (gdt));
+	fki_x86_phase_set(53, gdt.base);
 	asm volatile ("str %0" : "=m" (tr));
+	fki_x86_phase_set(54, tr);
 	s->idt_base = idt.base;
 	s->idt_limit = idt.limit;
 	s->gdt_base = gdt.base;
 	s->gdt_limit = gdt.limit;
 	s->tr = tr;
 	rdmsrq(MSR_GS_BASE, s->gs_base);
+	fki_x86_phase_set(55, s->gs_base);
 	rdmsrq(MSR_KERNEL_GS_BASE, s->kernel_gs_base);
+	fki_x86_phase_set(56, s->kernel_gs_base);
 	rdmsrq(MSR_STAR, s->star);
+	fki_x86_phase_set(57, s->star);
 	rdmsrq(MSR_LSTAR, s->lstar);
+	fki_x86_phase_set(58, s->lstar);
 	rdmsrq(MSR_CSTAR, s->cstar);
+	fki_x86_phase_set(59, s->cstar);
 	rdmsrq(MSR_SYSCALL_MASK, s->sfmask);
+	fki_x86_phase_set(60, s->sfmask);
 }
 
 extern void fki_x86_load_state_asm(const struct fki_x86_state *s);
@@ -211,6 +225,15 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 {
 	if (!saved)
 		return;
+	/*
+	 * The upcall switched CR3 to Linux but XNU's IDT is still loaded until
+	 * fki_x86_load_state_asm() below. Mask interrupts before touching any
+	 * state: a timer tick here would vector through XNU's handlers with
+	 * Linux CR3 active and hang the CPU. fki_x86_enter_prep() left
+	 * preemption disabled, and cookie restores the original IRQ flags at
+	 * the end of this function.
+	 */
+	local_irq_disable();
 	fki_x86_phase_set(30, 0);
 	if (foreign) {
 		fki_u64 prev_cr3 = foreign->cr3;
@@ -409,7 +432,9 @@ static DEFINE_MUTEX(fki_debug_lock);
  *   20 trampoline after CR3, 21 upcall entry, 22 upcall world found,
  *   23 upcall Linux world, 24 upcall back in XNU, 25 upcall abort
  *   30 leave entry, 31 before state load, 32 leave done
+ *   34 leave_save_state, 35 leave_saved, 36 leave_xnu_xsaved
  *   40 xnu_hook_x86 entry
+ *   50..60 x86_save_state steps (cr3/sidt/sgdt/str/MSRs)
  */
 volatile unsigned long fki_x86_phase;
 volatile unsigned long fki_x86_phase_arg;
@@ -451,6 +476,17 @@ static const char *fki_phase_name(unsigned long p)
 	case 35: return "leave_saved";
 	case 36: return "leave_xnu_xsaved";
 	case 40: return "host_hook";
+	case 50: return "save_enter";
+	case 51: return "save_cr3";
+	case 52: return "save_sidt";
+	case 53: return "save_sgdt";
+	case 54: return "save_str";
+	case 55: return "save_gs_base";
+	case 56: return "save_kernel_gs";
+	case 57: return "save_star";
+	case 58: return "save_lstar";
+	case 59: return "save_cstar";
+	case 60: return "save_sfmask";
 	default: return "?";
 	}
 }
