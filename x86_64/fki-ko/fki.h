@@ -39,6 +39,17 @@ void fki_log(const char *s, unsigned long len);
 void fki_log_alert(const char *s, unsigned long len);	/* KERN_ALERT: on the console even when it is quiet */
 /* Synchronous on-disk trace that survives a hard hang and a reboot. */
 int fki_debug_log(const char *s, unsigned long len);
+/*
+ * Lock-free phase breadcrumbs for atomic context. A helper thread pinned away
+ * from the XNU CPU flushes them to the fsynced trace, so the last phase is
+ * visible even when the world switch wedges with interrupts off.
+ * world_x86.S/fki_x86_state.S store the phase with a plain RIP-relative MOV.
+ */
+extern volatile unsigned long fki_x86_phase;
+extern volatile unsigned long fki_x86_phase_arg;
+void fki_x86_phase_set(unsigned long phase, unsigned long arg);
+/* Fill a zeroed XSAVE buffer with a sane FPU/SIMD state for a foreign world. */
+void fki_x86_fpstate_save(void *buf);
 int fki_region_alloc(unsigned long size, struct fki_region *r);
 void fki_region_free(struct fki_region *r);
 /* A named blob from the firmware search path. */

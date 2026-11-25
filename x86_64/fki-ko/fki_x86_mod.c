@@ -35,6 +35,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
+#include <linux/spinlock.h>
 #include <linux/timekeeping.h>
 #include <linux/vmalloc.h>
 
@@ -177,6 +178,7 @@ unsigned long fki_x86_enter_prep(const struct fki_x86_state *foreign,
 
 	if (!foreign)
 		return 0;
+	fki_x86_phase_set(2, 0);
 	preempt_disable();
 	local_irq_save(flags);
 	x86_save_state(saved);
@@ -185,6 +187,7 @@ unsigned long fki_x86_enter_prep(const struct fki_x86_state *foreign,
 	    saved->xsave_size)
 		x86_xsave((void *)saved->xsave_va);
 	this_cpu_write(x86_saved_cr4, fki_x86_ibt_off());
+	fki_x86_phase_set(3, fki_x86_read_cr4());
 	if (!x86_ibt_logged) {
 		x86_ibt_logged = true;
 		pr_info("fki-x86: XNU world IBT off: cr4 0x%lx -> 0x%lx\n",
@@ -192,11 +195,12 @@ unsigned long fki_x86_enter_prep(const struct fki_x86_state *foreign,
 	}
 	if (foreign->xsave_va && foreign->xsave_size)
 		x86_xrstor((const void *)foreign->xsave_va);
+	fki_x86_phase_set(4, 0);
 	/*
 	 * No fsynced trace here: preemption and IRQs are already off, so
 	 * fki_debug_log()'s mutex/file I/O would sleep and trip
 	 * "scheduling while atomic" (panic_on_warn makes that fatal).
-	 * The caller logs "xnu86: entering vstart" before we get here.
+	 * The phase breadcrumbs above are picked up by a kthread instead.
 	 */
 	return flags;
 }
@@ -207,6 +211,7 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 {
 	if (!saved)
 		return;
+	fki_x86_phase_set(30, 0);
 	if (foreign) {
 		fki_u64 prev_cr3 = foreign->cr3;
 
@@ -216,13 +221,27 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 	}
 	if (foreign && foreign->xsave_va && foreign->xsave_size)
 		x86_xsave((void *)foreign->xsave_va);
+	fki_x86_phase_set(31, saved->cr3);
 	fki_x86_load_state_asm(saved);
 	if (saved->xsave_va && saved->xsave_size)
 		x86_xrstor((const void *)saved->xsave_va);
 	fki_x86_ibt_restore(this_cpu_read(x86_saved_cr4));
 	local_irq_restore(cookie);
 	preempt_enable();
+	fki_x86_phase_set(32, 0);
 }
+
+/*
+ * Seed a world's XSAVE buffer with a sane FPU/SIMD state. The contiguous
+ * regions come zeroed; restoring those would set MXCSR=0 (all SIMD exceptions
+ * unmasked) before XNU has an IDT, so even ordinary memcpy can triple fault.
+ */
+void fki_x86_fpstate_save(void *buf)
+{
+	if (buf)
+		x86_xsave(buf);
+}
+EXPORT_SYMBOL(fki_x86_fpstate_save);
 EXPORT_SYMBOL(fki_x86_leave);
 
 void fki_x86_swap_user_state(const struct fki_x86_state *load,
@@ -367,6 +386,82 @@ EXPORT_SYMBOL(fki_log_alert);
 static struct file *fki_debug_file;
 static fki_u64 fki_debug_off;
 static DEFINE_MUTEX(fki_debug_lock);
+
+/*
+ * World-switch breadcrumbs. The downcall runs with preemption and IRQs off,
+ * and an early XNU fault can reset the box before dmesg is ever flushed. The
+ * phase/arg pair is written with plain stores (safe from asm and atomic
+ * context); a kthread on another CPU polls it and appends to the fsynced log.
+ *
+ * Phases:
+ *   2 enter_prep, 3 ibt off, 4 xrstor done
+ *   5 load_state before CR3, 6 after CR3, 7 MSRs done
+ *   10 world_call back from enter, 11 before XNU entry, 12 XNU returned
+ *   20 trampoline after CR3, 21 upcall entry, 22 upcall world found,
+ *   23 upcall Linux world, 24 upcall back in XNU, 25 upcall abort
+ *   30 leave entry, 31 before state load, 32 leave done
+ *   40 xnu_hook_x86 entry
+ */
+volatile unsigned long fki_x86_phase;
+volatile unsigned long fki_x86_phase_arg;
+EXPORT_SYMBOL(fki_x86_phase);
+EXPORT_SYMBOL(fki_x86_phase_arg);
+
+void fki_x86_phase_set(unsigned long phase, unsigned long arg)
+{
+	fki_x86_phase_arg = arg;
+	/* Publish arg first; the logger only reads the phase after this. */
+	smp_mb();
+	fki_x86_phase = phase;
+}
+EXPORT_SYMBOL(fki_x86_phase_set);
+
+static const char *fki_phase_name(unsigned long p)
+{
+	switch (p) {
+	case 2:  return "enter_prep";
+	case 3:  return "ibt_off";
+	case 4:  return "xrstor";
+	case 5:  return "load_pre_cr3";
+	case 6:  return "load_post_cr3";
+	case 7:  return "load_msrs";
+	case 10: return "world_entered";
+	case 11: return "before_vstart";
+	case 12: return "vstart_returned";
+	case 20: return "trampoline_cr3";
+	case 21: return "upcall_entry";
+	case 22: return "upcall_world";
+	case 23: return "upcall_linux";
+	case 24: return "upcall_xnu";
+	case 25: return "upcall_abort";
+	case 30: return "leave_entry";
+	case 31: return "leave_load";
+	case 32: return "leave_done";
+	case 40: return "host_hook";
+	default: return "?";
+	}
+}
+
+static int fki_phase_logger(void *unused)
+{
+	unsigned long last = READ_ONCE(fki_x86_phase);
+
+	while (!fki_thread_should_stop()) {
+		unsigned long p = READ_ONCE(fki_x86_phase);
+
+		if (p != last) {
+			char buf[160];
+			int n = snprintf(buf, sizeof(buf), "phase: %lu %s arg=0x%lx\n",
+			    p, fki_phase_name(p), READ_ONCE(fki_x86_phase_arg));
+
+			if (n > 0)
+				fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+			last = p;
+		}
+		fki_msleep(5);
+	}
+	return 0;
+}
 
 int fki_debug_log(const char *s, unsigned long len)
 {
@@ -837,9 +932,11 @@ void fki_thread_wake(void *thread)
 }
 EXPORT_SYMBOL(fki_thread_wake);
 
+static void *fki_phase_thread;
+
 static int __init fki_x86_init(void)
 {
-	int cpu;
+	int cpu, logger_cpu;
 
 	for_each_possible_cpu(cpu) {
 		init_completion(&x86_wake[cpu]);
@@ -848,12 +945,25 @@ static int __init fki_x86_init(void)
 	}
 	fki_hostcall_init();
 	fki_debug_init();
+	/*
+	 * Keep the phase logger off the CPU that insmod (and therefore the
+	 * hosted run) uses; that CPU runs with IRQs off while we are in XNU.
+	 */
+	logger_cpu = cpumask_any_but(cpu_online_mask, smp_processor_id());
+	if (logger_cpu < nr_cpu_ids)
+		fki_phase_thread = fki_thread_start(fki_phase_logger, NULL,
+		    logger_cpu, "fki-phase");
+	fki_x86_phase_set(1, 0);
 	pr_info("fki-x86: FKI-X86 v%d ready\n", FKI_X86_VERSION);
 	return 0;
 }
 
 static void __exit fki_x86_exit(void)
 {
+	fki_x86_phase_set(0, 0);
+	if (fki_phase_thread)
+		fki_thread_stop(fki_phase_thread);
+	fki_phase_thread = NULL;
 	fki_debug_exit();
 	fki_hostcall_exit();
 	pr_info("fki-x86: unloaded\n");

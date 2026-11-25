@@ -92,11 +92,16 @@ xnu_world_call_x86:
 	leaq	XW_LINUX_STATE(%r15), %rsi
 	call	fki_x86_enter
 	movq	%rax, XW_HOOK_COOKIE(%r15)
+	movq	$10, fki_x86_phase(%rip)
+	movq	%rax, fki_x86_phase_arg(%rip)
 
 	movq	XW_XNU_RSP(%r15), %rsp
 	movq	XW_ENTRY_ARG(%r15), %rdi
 	movq	XW_ENTRY_RIP(%r15), %rax
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$11, fki_x86_phase(%rip)
 	call	*%rax
+	movq	$12, fki_x86_phase(%rip)
 
 	xorl	%eax, %eax
 	jmp	.Lxnu_world_exit
@@ -140,6 +145,8 @@ xnu_world_abort_x86:
 	.globl xnu_world_upcall_x86
 	.type  xnu_world_upcall_x86, @function
 xnu_world_upcall_x86:
+	movq	%rdi, fki_x86_phase_arg(%rip)
+	movq	$21, fki_x86_phase(%rip)
 	pushq	%rbx
 	pushq	%rbp
 	pushq	%r12
@@ -152,6 +159,8 @@ xnu_world_upcall_x86:
 	movq	%rsi, %r11
 	movq	%rdx, %r12
 	W	%r15
+	movq	%r15, fki_x86_phase_arg(%rip)
+	movq	$22, fki_x86_phase(%rip)
 
 	movq	%r10, XW_HOOK_CALL(%r15)
 	movq	%r11, XW_HOOK_A1(%r15)
@@ -162,6 +171,7 @@ xnu_world_upcall_x86:
 	leaq	XW_LINUX_STATE(%r15), %rsi
 	leaq	XW_XNU_STATE(%r15), %rdx
 	call	fki_x86_leave
+	movq	$23, fki_x86_phase(%rip)
 
 	/* Run the host hook on Linux's stack, not on an XNU kernel stack. */
 	movq	%rsp, XW_XNU_RSP(%r15)
@@ -179,6 +189,7 @@ xnu_world_upcall_x86:
 	leaq	XW_LINUX_STATE(%r15), %rsi
 	call	fki_x86_enter
 	movq	%rax, XW_HOOK_COOKIE(%r15)
+	movq	$24, fki_x86_phase(%rip)
 
 	addq	$8, %rsp
 	popq	%r15
@@ -192,6 +203,7 @@ xnu_world_upcall_x86:
 /* Already in the Linux world: abandon XNU's frames and return from the
  * original xnu_world_call_x86() invocation. */
 .Lxnu_upcall_abort:
+	movq	$25, fki_x86_phase(%rip)
 	movq	$1, XW_RUNNING(%r15)
 	movq	$1, XW_RUN_RESULT(%r15)
 	movq	XW_LINUX_RSP(%r15), %rsp
@@ -222,6 +234,8 @@ xnu_world_upcall_x86:
 xnu_world_hook_trampoline_x86:
 	endbr64
 	movq	xnu_host_cr3_x86(%rip), %rax
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$20, fki_x86_phase(%rip)
 	movq	%rax, %cr3
 	jmp	xnu_world_upcall_x86
 	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86

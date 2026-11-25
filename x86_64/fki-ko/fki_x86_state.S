@@ -48,7 +48,10 @@ fki_x86_load_state_asm:
 	movq	%rax, 18(%rsp)
 
 	movq	FS_CR3(%rdi), %rax
+	movq	$5, fki_x86_phase(%rip)
 	movq	%rax, %cr3
+	movq	$6, fki_x86_phase(%rip)
+	movq	%rax, fki_x86_phase_arg(%rip)
 
 	lgdt	16(%rsp)
 	lidt	0(%rsp)
@@ -68,6 +71,7 @@ fki_x86_load_state_asm:
 	WRMSR_FIELD 0xc0000083, FS_CSTAR
 	WRMSR_FIELD 0xc0000084, FS_SFMASK
 
+	movq	$7, fki_x86_phase(%rip)
 	addq	$32, %rsp
 	ret
 	.size	fki_x86_load_state_asm, . - fki_x86_load_state_asm

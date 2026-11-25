@@ -46,6 +46,7 @@ static struct xnu_region {
 	struct fki_region ba;
 	struct fki_region pt;
 	struct fki_region xsave;
+	struct fki_region linux_xsave;
 } mem;
 
 static struct xnu_image_x86 img;
@@ -231,12 +232,18 @@ static void map_host_code(struct init_pt *pt, u64_t pt_pa,
 	unsigned long fki = (unsigned long)fki_x86_enter;
 	unsigned long worlds_va = (unsigned long)worlds;
 	unsigned long cr3_va = (unsigned long)&xnu_host_cr3_x86;
+	unsigned long phase_va = (unsigned long)&fki_x86_phase;
+	unsigned long phase_arg_va = (unsigned long)&fki_x86_phase_arg;
 
 	map_host_range(pt, pt_pa, xnu - 4 * PAGE_SIZE, xnu + 4 * PAGE_SIZE);
 	map_host_range(pt, pt_pa, fki - 8 * PAGE_SIZE, fki + 8 * PAGE_SIZE);
 	map_host_range(pt, pt_pa, worlds_va - PAGE_SIZE,
 	    worlds_va + 4 * PAGE_SIZE);
 	map_host_range(pt, pt_pa, cr3_va - PAGE_SIZE, cr3_va + PAGE_SIZE);
+	/* The trampoline and load_state_asm store breadcrumbs after CR3. */
+	map_host_range(pt, pt_pa, phase_va - PAGE_SIZE, phase_va + PAGE_SIZE);
+	map_host_range(pt, pt_pa, phase_arg_va - PAGE_SIZE,
+	    phase_arg_va + PAGE_SIZE);
 	map_host_range(pt, pt_pa, sp - 16 * PAGE_SIZE, sp + 16 * PAGE_SIZE);
 	map_host_range(pt, pt_pa, xnu_stack_va, xnu_stack_va + stack_size);
 	debugf("pt: host sp=0x%lx xnu=0x%lx fki=0x%lx worlds=0x%lx "
@@ -442,9 +449,11 @@ static int write_xnu_globals(void)
 /* ---- world setup ---------------------------------------------------------- */
 
 static int setup_world(struct xnu_world_x86 *w, int cpu, u64_t cr3_phys,
-    u64_t stack_top, u64_t xsave_va, u64_t xsave_size)
+    u64_t stack_top, u64_t xsave_va, u64_t xsave_size,
+    u64_t linux_xsave_va, u64_t linux_xsave_size)
 {
 	struct fki_x86_state *s = &w->xnu_state;
+	struct fki_x86_state *ls = &w->linux_state;
 
 	memset(w, 0, sizeof(*w));
 	s->cr3 = cr3_phys;
@@ -458,6 +467,9 @@ static int setup_world(struct xnu_world_x86 *w, int cpu, u64_t cr3_phys,
 	s->star = s->lstar = s->cstar = s->sfmask = 0;
 	s->xsave_va = xsave_va;
 	s->xsave_size = xsave_size;
+	/* Without this, Linux's FPU state is never saved/restored across upcalls. */
+	ls->xsave_va = linux_xsave_va;
+	ls->xsave_size = linux_xsave_size;
 	w->xnu_stack_top = stack_top;
 	w->xnu_rsp = stack_top;
 	return 0;
@@ -471,7 +483,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	struct init_pt pt;
 	u64_t image_size = vmhigh - vmlow;
 	const u64_t stack_size = 16 << 10;
-	u64_t stack_va, stack_top, xsave_va, cr3_phys;
+	u64_t stack_va, stack_top, xsave_va, linux_xsave_va, cr3_phys;
 	u64_t apic;
 	void *stack_host;
 	long r;
@@ -508,10 +520,22 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	/* Idle_PTs_init() rebuilds page tables; hand it the host mappings. */
 	((struct x86_boot_args *)mem.ba.va)->host_map = host_map_store;
 
+	/*
+	 * Both XSAVE buffers arrive zeroed. Restoring a zeroed legacy field sets
+	 * MXCSR=0 and an unmasked x87 control word while XNU has no IDT yet, so
+	 * seed them with a real FPU/SIMD state now. The Linux-side buffer also
+	 * lets fki_x86_leave() restore our own FPU state after each upcall.
+	 */
 	xsave_va = 0;
-	err = fki_x86_shared_alloc(4096, &mem.xsave);
-	if (!err)
+	linux_xsave_va = 0;
+	if (!fki_x86_shared_alloc(4096, &mem.xsave)) {
 		xsave_va = (u64_t)mem.xsave.va;
+		fki_x86_fpstate_save(mem.xsave.va);
+	}
+	if (!fki_x86_shared_alloc(4096, &mem.linux_xsave)) {
+		linux_xsave_va = (u64_t)mem.linux_xsave.va;
+		fki_x86_fpstate_save(mem.linux_xsave.va);
+	}
 
 	cpu = smp_processor_id();
 	fki_bind_cpu(cpu); /* keep the whole downcall on one CPU */
@@ -520,7 +544,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	nr_cpus = min(nr_cpus, fki_x86_num_cpus());
 	for (i = 0; i < nr_cpus; i++)
 		setup_world(&worlds[i], i, cr3_phys, stack_top, xsave_va,
-		    mem.xsave.size);
+		    mem.xsave.size, linux_xsave_va, mem.linux_xsave.size);
 
 	/* Upcalls rediscover the world from CPUID, not from "CPU 0". */
 	if (fki_x86_cpu_apic_id(cpu, &apic)) {
@@ -533,6 +557,9 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	err = write_xnu_globals();
 	if (err)
 		goto out_xsave;
+	debugf("run: globals ok hook=0x%llx xsave=0x%llx/0x%llx\n",
+	    (unsigned long long)xnu_upcall_va,
+	    (unsigned long long)xsave_va, (unsigned long long)linux_xsave_va);
 
 	pr_info("xnu86: stack=0x%llx trampoline=0x%llx cr3=0x%llx\n",
 	    (unsigned long long)stack_top,
@@ -547,6 +574,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	debugf("run: vstart returned %ld\n", r);
 
 out_xsave:
+	fki_x86_shared_free(&mem.linux_xsave);
 	fki_x86_shared_free(&mem.xsave);
 	free_init_pt(&pt);
 	vfree(stack_host);
