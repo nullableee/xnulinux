@@ -23,7 +23,7 @@ typedef uint64_t fki_u64;
 typedef u64 fki_u64;
 #endif
 
-/* Physically contiguous memory, mapped contiguously and executable. */
+/* Physically contiguous memory; va is the host linear-map alias, pa its contiguous physical base. */
 struct fki_region {
 	void *va;
 	fki_u64 pa;
@@ -47,7 +47,7 @@ fki_u64 fki_counter(void);
 void fki_random(void *buf, unsigned long len);
 /*
  * Physically contiguous memory with real physical addresses (for a foreign kernel whose own page tables
- * the hardware walks). va is a kernel linear-map address (RW, not executable). size rounds up to a power of two.
+ * the hardware walks). va is a kernel linear-map address (RW, not executable); size rounds up to a page.
  */
 int fki_contig_alloc(unsigned long size, struct fki_region *r);
 void fki_contig_free(struct fki_region *r);

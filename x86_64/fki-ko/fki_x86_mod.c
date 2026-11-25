@@ -49,22 +49,17 @@ static struct completion x86_wake[NR_CPUS];
 static DEFINE_PER_CPU(call_single_data_t, x86_csd);
 
 /*
- * CET/IBT is a problem in both directions on current x86_64 Linux:
+ * XNU is not built with -fcf-protection: _vstart begins with "push %rbp",
+ * so the downcall's `call *%rax' would raise #CP with IBT enabled.
  *
- *  - objtool "seals" unexported functions by replacing their ENDBR64 with
- *    the 0f 1f 40 d6 poison NOP. is_endbr() still recognises that, so
- *    register_kprobe() moves kp.addr past it, but the poison is not a legal
- *    indirect-branch target: calling either address raises #CP.
- *  - the XNU image is not built with -fcf-protection; _vstart begins with
- *    "push %rbp", so the downcall's `call *%rax' would raise #CP too.
- *
- * CR4.CET is per-CPU and ring-0 writable. Drop it only for the indirect
- * calls and while the XNU world owns the CPU; Linux's CET is restored on
- * every upcall/leave.
+ * CR4.CET is per-CPU and ring-0 writable. Drop it while the XNU world owns
+ * the CPU and restore it on every upcall/leave. native_write_cr4() re-adds
+ * pinned CR4 bits (including CET), so CR4 is written directly with MOV.
  */
 #define FKI_X86_CR4_CET_BIT	23
 #define FKI_X86_CR4_CET		(1UL << FKI_X86_CR4_CET_BIT)
 static DEFINE_PER_CPU(unsigned long, x86_saved_cr4);
+static bool x86_ibt_logged;
 
 /*
  * native_write_cr4() re-adds "pinned" bits, including CR4.CET on this host:
@@ -183,6 +178,11 @@ unsigned long fki_x86_enter(const struct fki_x86_state *foreign,
 	    saved->xsave_size)
 		x86_xsave((void *)saved->xsave_va);
 	this_cpu_write(x86_saved_cr4, fki_x86_ibt_off());
+	if (!x86_ibt_logged) {
+		x86_ibt_logged = true;
+		pr_info("fki-x86: XNU world IBT off: cr4 0x%lx -> 0x%lx\n",
+		    this_cpu_read(x86_saved_cr4), fki_x86_read_cr4());
+	}
 	if (foreign->xsave_va && foreign->xsave_size)
 		x86_xrstor((const void *)foreign->xsave_va);
 	x86_load_state(foreign);
@@ -504,74 +504,45 @@ EXPORT_SYMBOL(fki_file_close);
 
 /* ---- Memory ---------------------------------------------------------------- */
 
-static int (*p_set_memory_x)(unsigned long addr, int numpages);
-
-static int fki_x86_resolve(void)
-{
-	static unsigned long (*lookup)(const char *);
-	struct kprobe kp = { .symbol_name = "kallsyms_lookup_name" };
-	unsigned long cr4;
-
-	if (p_set_memory_x)
-		return 0;
-	if (!lookup) {
-		if (register_kprobe(&kp))
-			return -ENOENT;
-		/*
-		 * arch_adjust_kprobe_addr() skips ENDBR64 (or its sealed NOP
-		 * poison) at the function entry.  That address cannot be
-		 * called with IBT on, so use it only with CR4.CET cleared.
-		 */
-		lookup = (void *)kp.addr;
-		unregister_kprobe(&kp);
-	}
-	cr4 = fki_x86_ibt_off();
-	pr_info("fki-x86: IBT disabled for lookup: cr4 0x%lx -> 0x%lx\n",
-	    cr4, fki_x86_read_cr4());
-	p_set_memory_x = (void *)lookup("set_memory_x");
-	fki_x86_ibt_restore(cr4);
-	if (!p_set_memory_x)
-		return -ENOENT;
-	pr_info("fki-x86: set_memory_x=%pS via kallsyms_lookup_name=%pS\n",
-	    (void *)p_set_memory_x, (void *)lookup);
-	return 0;
-}
-
+/*
+ * dma_alloc_coherent(NULL, ...) dereferences a struct device on current
+ * kernels, and the requested regions are far larger than MAX_ORDER anyway.
+ * alloc_contig_pages() gives the contiguous PFNs the foreign kernel's page
+ * tables need; page_address() is only used by the host to fill the region.
+ * XNU maps these pages itself with non-NX entries after the CR3 switch, so
+ * set_memory_x() and the kallsyms lookup are unnecessary.
+ */
 int fki_x86_shared_alloc(unsigned long size, struct fki_region *r)
 {
-	dma_addr_t pa;
-	void *va;
-	unsigned long cr4;
-	int err, ret;
+	struct page *page;
+	unsigned long nr_pages;
 
 	if (!r || !size)
 		return -EINVAL;
-	err = fki_x86_resolve();
-	if (err)
-		return err;
-	va = dma_alloc_coherent(NULL, PAGE_ALIGN(size), &pa, GFP_KERNEL);
-	if (!va)
+	nr_pages = PFN_UP(size);
+	page = alloc_contig_pages_noprof(nr_pages, GFP_KERNEL | __GFP_ZERO,
+	    NUMA_NO_NODE, NULL);
+	if (!page)
 		return -ENOMEM;
-	cr4 = fki_x86_ibt_off();
-	ret = p_set_memory_x((unsigned long)va, PFN_UP(size));
-	fki_x86_ibt_restore(cr4);
-	if (ret) {
-		dma_free_coherent(NULL, PAGE_ALIGN(size), va, pa);
-		return -EPERM;
-	}
-	r->va = va;
-	r->pa = pa;
-	r->size = PAGE_ALIGN(size);
-	r->handle = va;
+	r->va = page_address(page);
+	r->pa = page_to_phys(page);
+	r->size = nr_pages << PAGE_SHIFT;
+	r->handle = page;
 	return 0;
 }
 EXPORT_SYMBOL(fki_x86_shared_alloc);
 
 void fki_x86_shared_free(struct fki_region *r)
 {
+	struct page *page;
+	unsigned long nr_pages;
+
 	if (!r || !r->va)
 		return;
-	dma_free_coherent(NULL, r->size, r->va, (dma_addr_t)r->pa);
+	page = r->handle;
+	nr_pages = r->size >> PAGE_SHIFT;
+	if (page && nr_pages)
+		free_contig_range(page_to_pfn(page), nr_pages);
 	memset(r, 0, sizeof(*r));
 }
 EXPORT_SYMBOL(fki_x86_shared_free);
