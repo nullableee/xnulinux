@@ -69,13 +69,9 @@ See [GitHub Actions](https://github.com/nullableee/xnulinux/actions) for the lat
 
 Upstream: [AFK-surf/xnulinux](https://github.com/AFK-surf/xnulinux)
 
-The fork's `main` has diverged from upstream `main`. At the time this README was updated, GitHub's comparison reported:
+The fork's `main` has diverged from upstream `main`; it contains fork-specific commits and is also missing upstream commits. The fork-specific additions are concentrated in `x86_64/` and the `build-hosted-xnu-x86_64` workflow.
 
-- **29 commits ahead** of upstream.
-- **28 commits behind** upstream.
-- The fork-specific additions are concentrated in `x86_64/` and the `build-hosted-xnu-x86_64` workflow.
-
-This is not a clean, continuously synchronized mirror. Review the [branch comparison](https://github.com/nullableee/xnulinux/compare/AFK-surf:main...main) before rebasing or merging upstream changes. In particular, do not assume upstream ARM64 changes are automatically present in this fork.
+The exact ahead/behind counts change as either branch moves, so use the live [branch comparison](https://github.com/nullableee/xnulinux/compare/AFK-surf:main...main) for current numbers before rebasing or merging. This is not a clean, continuously synchronized mirror. In particular, do not assume upstream ARM64 changes are automatically present in this fork.
 
 ## Requirements and legal notes
 
