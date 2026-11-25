@@ -15,6 +15,9 @@
 #include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/random.h>
+#include <linux/hardirq.h>
+#include <linux/irqflags.h>
+#include <linux/preempt.h>
 #include <linux/string.h>
 #include <linux/timekeeping.h>
 
@@ -54,11 +57,9 @@ static const char *fault_name(unsigned long v)
 
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 {
-	char trace[128];
-
-	snprintf(trace, sizeof(trace), "upcall: call=%lu a1=0x%lx a2=0x%lx\n",
-	    call, a1, a2);
-	fki_debug_log(trace, strlen(trace));
+	pr_info("upcall: call=%lu a1=0x%lx a2=0x%lx "
+	    "preempt=0x%x nmi=%d irqoff=%d\n",
+	    call, a1, a2, preempt_count(), in_nmi(), irqs_disabled());
 
 	switch (call) {
 	case LINUX64_CALL_IDLE:

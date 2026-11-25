@@ -425,6 +425,17 @@ static int write_xnu_globals(void)
 	}
 	pr_info("xnu86: _linux64_hook=0x%llx -> upcall=0x%llx\n",
 	    (unsigned long long)a_hook, (unsigned long long)hook);
+	{
+		u64_t a_serial = macho_x86_sym(&img, "_pal_serial_init");
+		void *serial_va = a_serial ? xnu_va_to_host(a_serial) : NULL;
+		u64_t a_kprintf = macho_x86_sym(&img, "_kprintf");
+		void *kprintf_va = a_kprintf ? xnu_va_to_host(a_kprintf) : NULL;
+
+		if (serial_va)
+			*(u8 *)serial_va = 0xc3; /* ret: no physical COM1 on host */
+		if (kprintf_va)
+			*(u8 *)kprintf_va = 0xc3; /* ret: avoid polling COM1 UART */
+	}
 	return 0;
 }
 

@@ -38,6 +38,7 @@
 #include <linux/timekeeping.h>
 #include <linux/vmalloc.h>
 
+#include <asm/desc.h>
 #include <asm/fpu/api.h>
 #include <asm/msr.h>
 #include <asm/ptrace.h>
@@ -109,7 +110,6 @@ static void x86_save_state(struct fki_x86_state *s)
 	struct x86_desc_ptr idt, gdt;
 	u16 tr = 0;
 
-	memset(s, 0, sizeof(*s));
 	s->cr3 = __read_cr3();
 	asm volatile ("sidt %0" : "=m" (idt));
 	asm volatile ("sgdt %0" : "=m" (gdt));
@@ -127,6 +127,8 @@ static void x86_save_state(struct fki_x86_state *s)
 	rdmsrq(MSR_SYSCALL_MASK, s->sfmask);
 }
 
+extern void fki_x86_load_state_asm(const struct fki_x86_state *s);
+
 static void x86_load_state(const struct fki_x86_state *s)
 {
 	struct x86_desc_ptr idt = { .limit = s->idt_limit, .base = s->idt_base };
@@ -135,8 +137,13 @@ static void x86_load_state(const struct fki_x86_state *s)
 	write_cr3(s->cr3);
 	asm volatile ("lgdt %0" : : "m" (gdt) : "memory");
 	asm volatile ("lidt %0" : : "m" (idt) : "memory");
-	if (s->tr)
-		asm volatile ("ltr %w0" : : "r" (s->tr) : "memory");
+	if (s->tr) {
+		u16 cur_tr = 0;
+
+		asm volatile ("str %0" : "=m" (cur_tr));
+		if (cur_tr != s->tr)
+			asm volatile ("ltr %w0" : : "r" (s->tr) : "memory");
+	}
 	wrmsrq(MSR_KERNEL_GS_BASE, s->kernel_gs_base);
 	wrmsrq(MSR_GS_BASE, s->gs_base);
 	wrmsrq(MSR_STAR, s->star);
@@ -163,7 +170,7 @@ static inline void x86_xrstor(const void *buf)
 	    : "memory");
 }
 
-unsigned long fki_x86_enter(const struct fki_x86_state *foreign,
+unsigned long fki_x86_enter_prep(const struct fki_x86_state *foreign,
     struct fki_x86_state *saved)
 {
 	unsigned long flags;
@@ -185,7 +192,12 @@ unsigned long fki_x86_enter(const struct fki_x86_state *foreign,
 	}
 	if (foreign->xsave_va && foreign->xsave_size)
 		x86_xrstor((const void *)foreign->xsave_va);
-	x86_load_state(foreign);
+	/*
+	 * No fsynced trace here: preemption and IRQs are already off, so
+	 * fki_debug_log()'s mutex/file I/O would sleep and trip
+	 * "scheduling while atomic" (panic_on_warn makes that fatal).
+	 * The caller logs "xnu86: entering vstart" before we get here.
+	 */
 	return flags;
 }
 EXPORT_SYMBOL(fki_x86_enter);
@@ -195,11 +207,16 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 {
 	if (!saved)
 		return;
-	if (foreign)
+	if (foreign) {
+		fki_u64 prev_cr3 = foreign->cr3;
+
 		x86_save_state(foreign);
+		if (prev_cr3)
+			foreign->cr3 = prev_cr3;
+	}
 	if (foreign && foreign->xsave_va && foreign->xsave_size)
 		x86_xsave((void *)foreign->xsave_va);
-	x86_load_state(saved);
+	fki_x86_load_state_asm(saved);
 	if (saved->xsave_va && saved->xsave_size)
 		x86_xrstor((const void *)saved->xsave_va);
 	fki_x86_ibt_restore(this_cpu_read(x86_saved_cr4));
@@ -358,6 +375,17 @@ int fki_debug_log(const char *s, unsigned long len)
 
 	if (!s || !len)
 		return 0;
+	/*
+	 * Never sleep in the fsync path.  World-switch code calls this with
+	 * preemption/IRQs disabled; mutex_lock(), kernel_write() and
+	 * vfs_fsync() would all schedule there and panic the host with
+	 * panic_on_warn.  Emit to printk instead; the persistent log is only
+	 * for callers in ordinary context.
+	 */
+	if (preempt_count() || irqs_disabled()) {
+		printk(KERN_INFO "fki-x86: %.*s\n", (int)len, s);
+		return 0;
+	}
 	mutex_lock(&fki_debug_lock);
 	if (!fki_debug_file) {
 		mutex_unlock(&fki_debug_lock);
