@@ -114,22 +114,35 @@ static int xnu_stack_watchdog(void *unused)
 	while (!kthread_should_stop()) {
 		if (READ_ONCE(xnu_run_active) && xnu_stack_host &&
 		    xnu_stack_top) {
-			/* Dump below the RSP saved at the last upcall: that is
-			 * where the currently active XNU frames live. */
+			/*
+			 * The saved RSP is the value left by the upcall
+			 * prologue: seven pushes plus the alignment adjustment
+			 * below the return address pushed by XNU's call to the
+			 * hook.  The saved registers, that return address and
+			 * the live vstart/Idle_PTs_init frames are therefore
+			 * ABOVE this RSP, not below it.  Dumping downwards only
+			 * shows stale frames from earlier PE_init_platform()
+			 * calls.  Walk upwards to the stack top instead.
+			 */
 			u64_t rsp = READ_ONCE(worlds[0].xnu_rsp);
 			char buf[3072];
 			u64_t *words;
-			int n, i;
+			int nwords, n, i;
 
 			if (rsp < xnu_stack_top - 4096 || rsp > xnu_stack_top)
 				rsp = xnu_stack_top - 512;
-			words = (u64_t *)(uintptr_t)(rsp - 1024);
+			nwords = (int)((xnu_stack_top - rsp) >> 3) + 1;
+			if (nwords < 1)
+				nwords = 1;
+			if (nwords > 128)
+				nwords = 128;
+			words = (u64_t *)(uintptr_t)rsp;
 			n = snprintf(buf, sizeof(buf),
-			    "xnu stack top=0x%llx rsp=0x%llx base=0x%llx:",
+			    "xnu stack top=0x%llx rsp=0x%llx base=0x%llx words=%d:",
 			    (unsigned long long)xnu_stack_top,
 			    (unsigned long long)rsp,
-			    (unsigned long long)(uintptr_t)words);
-			for (i = 0; i < 128 && n < (int)sizeof(buf) - 32; i++)
+			    (unsigned long long)(uintptr_t)words, nwords);
+			for (i = 0; i < nwords && n < (int)sizeof(buf) - 32; i++)
 				n += snprintf(buf + n, sizeof(buf) - n,
 				    " %016llx",
 				    (unsigned long long)READ_ONCE(words[i]));
