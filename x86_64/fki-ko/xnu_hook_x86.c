@@ -21,6 +21,23 @@
 MODULE_LICENSE("GPL");
 
 static unsigned long n_fault, n_user_enter, n_panic, n_assert;
+static xnu_hook_translate_fn hook_translate;
+
+/*
+ * The upcall switches to Linux's CR3 before running here. Any argument that
+ * points into XNU's address space must be translated to the host alias first.
+ */
+static unsigned long hx(unsigned long va)
+{
+	return hook_translate ? (unsigned long)hook_translate(va) : va;
+}
+
+int xnu_hook_set_translate(xnu_hook_translate_fn fn)
+{
+	hook_translate = fn;
+	return 0;
+}
+EXPORT_SYMBOL(xnu_hook_set_translate);
 
 static const char *fault_name(unsigned long v)
 {
@@ -41,7 +58,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	case LINUX64_CALL_IDLE:
 		/* a1 = ns to the next XNU timer, a2 = pending-IPI word */
 		fki_x86_idle_until(a1, 1000000000ULL,
-		    (const volatile unsigned int *)(uintptr_t)a2);
+		    (const volatile unsigned int *)(uintptr_t)hx(a2));
 		return 0;
 
 	case LINUX64_CALL_PREEMPTED:
@@ -50,22 +67,24 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	case LINUX64_CALL_RANDOM:
 		if (a1 && a2)
-			get_random_bytes((void *)(uintptr_t)a1, (unsigned int)a2);
+			get_random_bytes((void *)(uintptr_t)hx(a1), (unsigned int)a2);
 		return 0;
 
 	case LINUX64_CALL_WALLCLOCK: {
 		struct timespec64 ts;
 
 		if (a1) {
+			fki_u64 *out = (fki_u64 *)(uintptr_t)hx(a1);
+
 			ktime_get_real_ts64(&ts);
-			((fki_u64 *)(uintptr_t)a1)[0] = (fki_u64)ts.tv_sec;
-			((fki_u64 *)(uintptr_t)a1)[1] = (fki_u64)ts.tv_nsec;
+			out[0] = (fki_u64)ts.tv_sec;
+			out[1] = (fki_u64)ts.tv_nsec;
 		}
 		return 0;
 	}
 
 	case LINUX64_CALL_CONSOLE_WRITE: {
-		const char *s = (const char *)(uintptr_t)a1;
+		const char *s = (const char *)(uintptr_t)hx(a1);
 		unsigned long i;
 
 		for (i = 0; s && i < a2; i++) {
@@ -78,7 +97,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	case LINUX64_CALL_KPRINTF: {
 		char buf[256];
-		const char *s = (const char *)(uintptr_t)a1;
+		const char *s = (const char *)(uintptr_t)hx(a1);
 
 		if (!s)
 			return 0;
@@ -89,24 +108,27 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	case LINUX64_CALL_ASSERT: {
 		struct linux64_assert_info *ai =
-		    (struct linux64_assert_info *)(uintptr_t)a1;
+		    (struct linux64_assert_info *)(uintptr_t)hx(a1);
+		const char *file = ai && ai->file
+		    ? (const char *)(uintptr_t)hx((unsigned long)ai->file) : "?";
+		const char *expr = ai && ai->expr
+		    ? (const char *)(uintptr_t)hx((unsigned long)ai->expr) : "?";
 
 		n_assert++;
 		pr_alert("xnu: assertion failed at %s:%ld: %s\n",
-		    ai && ai->file ? ai->file : "?", ai ? ai->line : 0,
-		    ai && ai->expr ? ai->expr : "?");
+		    file, ai ? ai->line : 0, expr);
 		return 1;
 	}
 
 	case LINUX64_CALL_PANIC:
 		n_panic++;
 		pr_alert("xnu: panic: %s\n",
-		    a1 ? (const char *)(uintptr_t)a1 : "(no message)");
+		    a1 ? (const char *)(uintptr_t)hx(a1) : "(no message)");
 		return 1;
 
 	case LINUX64_CALL_FAULT: {
 		const struct linux64_x86_fault *f =
-		    (const struct linux64_x86_fault *)(uintptr_t)a1;
+		    (const struct linux64_x86_fault *)(uintptr_t)hx(a1);
 
 		n_fault++;
 		if (!f)

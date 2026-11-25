@@ -72,3 +72,6 @@ long xnu_world_call_x86(struct xnu_world_x86 *w, unsigned long fn, unsigned long
 void xnu_world_upcall_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
+/* Translate XNU virtual addresses in hook arguments to host aliases. */
+typedef void *(*xnu_hook_translate_fn)(unsigned long va);
+int xnu_hook_set_translate(xnu_hook_translate_fn fn);

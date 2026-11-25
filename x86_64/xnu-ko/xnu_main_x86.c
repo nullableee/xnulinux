@@ -18,6 +18,7 @@
 #include <linux/module.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/smp.h>
 
 MODULE_LICENSE("Proprietary");
 MODULE_DESCRIPTION("XNU x86_64 host loader (APSL-2.0)");
@@ -226,6 +227,11 @@ static void *xnu_va_to_host(u64_t va)
 	return (void *)((char *)mem.kc.va + (va - img.vmlow));
 }
 
+static void *xnu_va_translate(unsigned long va)
+{
+	return xnu_va_to_host(va);
+}
+
 static u64_t x86_read_cr3(void)
 {
 	u64_t v;
@@ -314,7 +320,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 	u64_t stack_va, xsave_va, cr3_phys;
 	u64_t apic;
 	long r;
-	int err, i;
+	int cpu, err, i;
 
 	err = fki_x86_shared_alloc(16 << 10, &mem.stack);
 	if (err) {
@@ -345,14 +351,22 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 	if (!err)
 		xsave_va = (u64_t)mem.xsave.va;
 
+	cpu = smp_processor_id();
+	fki_bind_cpu(cpu); /* keep the whole downcall on one CPU */
+
 	nr_cpus = min(nr_cpus, MAX_XNU_CPUS);
 	nr_cpus = min(nr_cpus, fki_x86_num_cpus());
-	for (i = 0; i < nr_cpus; i++) {
+	for (i = 0; i < nr_cpus; i++)
 		setup_world(&worlds[i], i, cr3_phys, stack_va, xsave_va,
 		    mem.xsave.size);
-		fki_x86_cpu_apic_id(i, &apic);
-		xnu_worlds_x86[LINUX64_X86_CPU_SLOT(apic)] = &worlds[i];
+
+	/* Upcalls rediscover the world from CPUID, not from "CPU 0". */
+	if (fki_x86_cpu_apic_id(cpu, &apic)) {
+		pr_err("xnu86: cannot resolve APIC ID for CPU %d\n", cpu);
+		err = -EINVAL;
+		goto out_xsave;
 	}
+	xnu_worlds_x86[LINUX64_X86_CPU_SLOT(apic)] = &worlds[0];
 
 	err = write_xnu_globals();
 	if (err)
@@ -445,6 +459,7 @@ static int __init xnu_x86_init(void)
 	kc_phys = mem.kc.pa;
 	kc_virt = (u64_t)mem.kc.va;
 	xnu_slide = 0;
+	xnu_hook_set_translate(xnu_va_translate);
 
 	ba = kzalloc(sizeof(*ba), GFP_KERNEL);
 	if (!ba) {
@@ -491,6 +506,7 @@ static int __init xnu_x86_init(void)
 static void __exit xnu_x86_exit(void)
 {
 	stop_run = 1;
+	xnu_hook_set_translate(NULL);
 }
 
 module_init(xnu_x86_init);
