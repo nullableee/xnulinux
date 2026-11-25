@@ -49,6 +49,7 @@ static struct xnu_world_x86 worlds[MAX_XNU_CPUS];
 static struct xnu_region {
 	struct fki_region kc;
 	struct fki_region ba;
+	struct fki_region dt;
 	struct fki_region pt;
 	struct fki_region xsave;
 	struct fki_region linux_xsave;
@@ -306,16 +307,22 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
     u64_t vmhigh, u64_t map_top, u64_t xnu_stack_va, u64_t stack_size,
     u64_t *out_phys)
 {
+	u64_t alias_top = map_top;
 	const unsigned long id_n_pde = DIV_ROUND_UP(map_top, 2UL << 20);
 	const unsigned long k_pages = DIV_ROUND_UP(vmhigh - vmlow, PAGE_SIZE);
 	const unsigned long k_first_pt = (vmlow >> PAGE_SHIFT) & 0x1ffUL;
 	/*
 	 * XNU expects the booter to have installed the "static map"
 	 * 0xffffff8000000000 + pa -> pa for all low physical memory: its
-	 * ml_static_ptovirt() uses that alias for boot_args, the EFI map and
-	 * the page tables allocated from physfree.  One PTE page covers 2 MiB.
+	 * ml_static_ptovirt() uses that alias for boot_args, the EFI map, the
+	 * device tree and the page tables allocated from physfree.  One PTE
+	 * page covers 2 MiB.  The DT can be allocated above ram_mb, so extend
+	 * the alias only as far as its last byte.
 	 */
-	const unsigned long k_n_pte = DIV_ROUND_UP(map_top, 2UL << 20);
+	if (mem.dt.pa && mem.dt.size)
+		alias_top = max_t(u64_t, alias_top,
+		    ALIGN(mem.dt.pa + mem.dt.size, 2UL << 20));
+	const unsigned long k_n_pte = DIV_ROUND_UP(alias_top, 2UL << 20);
 	unsigned long pt_size, i, n;
 	u64_t pa;
 
@@ -357,7 +364,7 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 		    pt_page_pa(pa, PT_PTE_K + i) | PT_E_PRESENT | PT_E_WRITABLE;
 
 	/* ml_static_ptovirt() alias: kernel-half VA == low PA. */
-	for (i = 0; i < (map_top >> PAGE_SHIFT); i++) {
+	for (i = 0; i < (alias_top >> PAGE_SHIFT); i++) {
 		unsigned long pd = i >> 9;
 		unsigned long pt_i = i & 0x1ffUL;
 
@@ -424,6 +431,48 @@ static int build_efi_map(u64_t total)
 	}
 	efi_count = ARRAY_SIZE(types);
 	memcpy(efi_region.va, efi_map, sizeof(efi_map));
+	return 0;
+}
+
+/*
+ * Minimal flattened device tree for XNU's PE_init_platform().
+ *
+ * A zero deviceTreeP is not enough: ml_static_ptovirt(0) is still non-NULL, so
+ * SecureDTInit() accepts a zero-length tree and pe_init_debug() walks random
+ * kernel data as if it were a DT node.  Give it a real one-property root node.
+ *
+ * Layout (pexpert/pexpert/device_tree.h):
+ *   DeviceTreeNode { nProperties, nChildren }
+ *   DeviceTreeNodeProperty { name[32], length, value[ROUND4(length)] }
+ */
+struct linux64_dt_property {
+	char name[32];
+	u32_t length;
+	unsigned char value[8]; /* "root\0" padded to a 4-byte boundary */
+};
+
+struct linux64_dt_node {
+	u32_t n_properties;
+	u32_t n_children;
+	struct linux64_dt_property property[1];
+};
+
+#define LINUX64_DT_SIZE sizeof(struct linux64_dt_node)
+
+static int build_device_tree(void)
+{
+	struct linux64_dt_node *dt;
+
+	if (fki_x86_shared_alloc(LINUX64_DT_SIZE, &mem.dt))
+		return -ENOMEM;
+	dt = mem.dt.va;
+
+	dt->n_properties = 1;
+	dt->n_children = 0;
+	memcpy(dt->property[0].name, "name", sizeof("name"));
+	dt->property[0].length = sizeof("root"); /* includes the NUL */
+	memcpy(dt->property[0].value, "root", sizeof("root"));
+
 	return 0;
 }
 
@@ -769,7 +818,40 @@ static int __init xnu_x86_init(void)
 		fki_blob_put(blob);
 		return -ENOMEM;
 	}
-	build_efi_map(total);
+	err = build_efi_map(total);
+	if (err) {
+		pr_err("xnu86: cannot build EFI map (%d)\n", err);
+		kfree(cmdline_copy);
+		kfree(ba);
+		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&mem.kc);
+		fki_blob_put(blob);
+		return err;
+	}
+	err = build_device_tree();
+	if (err) {
+		pr_err("xnu86: cannot build device tree (%d)\n", err);
+		kfree(cmdline_copy);
+		kfree(ba);
+		fki_x86_shared_free(&efi_region);
+		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&mem.kc);
+		fki_blob_put(blob);
+		return err;
+	}
+	if ((u64_t)(u32_t)mem.dt.pa != mem.dt.pa) {
+		pr_err("xnu86: device tree PA 0x%llx is not 32-bit\n",
+		    (unsigned long long)mem.dt.pa);
+		err = -EFBIG;
+		kfree(cmdline_copy);
+		kfree(ba);
+		fki_x86_shared_free(&mem.dt);
+		fki_x86_shared_free(&efi_region);
+		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&mem.kc);
+		fki_blob_put(blob);
+		return err;
+	}
 
 	/*
 	 * KC_hdrs_vaddr is passed through ml_static_ptovirt() by vstart(), so it
@@ -783,11 +865,19 @@ static int __init xnu_x86_init(void)
 		pr_err("xnu86: boot_args init failed (%d)\n", err);
 		kfree(cmdline_copy);
 		kfree(ba);
+		fki_x86_shared_free(&mem.dt);
+		fki_x86_shared_free(&efi_region);
 		fki_x86_shared_free(&mem.ba);
 		fki_x86_shared_free(&mem.kc);
 		fki_blob_put(blob);
 		return err;
 	}
+	debugf("loader: boot_args dt before=0x%x/%u\n",
+	    ba->device_tree_p, ba->device_tree_length);
+	ba->device_tree_p = (u32_t)mem.dt.pa;
+	ba->device_tree_length = LINUX64_DT_SIZE;
+	debugf("loader: dt pa=0x%llx size=%u\n",
+	    (unsigned long long)mem.dt.pa, (unsigned)LINUX64_DT_SIZE);
 	memcpy(mem.ba.va, ba, sizeof(*ba));
 	ba_phys = mem.ba.pa;
 	debugf("loader: boot_args pa=0x%llx efi pa=0x%llx\n",
@@ -797,6 +887,7 @@ static int __init xnu_x86_init(void)
 
 	kfree(cmdline_copy);
 	kfree(ba);
+	fki_x86_shared_free(&mem.dt);
 	fki_x86_shared_free(&efi_region);
 	fki_x86_shared_free(&mem.ba);
 	fki_x86_shared_free(&mem.kc);
