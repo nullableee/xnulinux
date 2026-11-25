@@ -82,6 +82,7 @@ module_param(stop_run, int, 0644);
 static void *xnu_stack_host;
 static u64_t xnu_stack_top;
 static volatile int xnu_run_active;
+static volatile int xnu_stack_dump_seq;
 static struct task_struct *xnu_stack_thread;
 
 static void logs(const char *s)
@@ -106,48 +107,49 @@ static void debugf(const char *fmt, ...)
 /*
  * XNU runs with interrupts and preemption disabled on its CPU, so the normal
  * phase breadcrumbs go quiet if it wedges. This watchdog runs on another CPU
- * and dumps the top of XNU's stack once a second. The addresses can be mapped
- * back to symbols offline from the same firmware image.
+ * and takes a few snapshots of XNU's stack. The addresses can be mapped back
+ * to symbols offline from the same firmware image.
+ *
+ * xnu_rsp is stale after the last upcall: XNU keeps executing on the same
+ * stack and reuses those slots.  The live frame can be BELOW the saved RSP
+ * (a nested call such as early_random_init/doublemap_init) or above it (the
+ * saved registers and return address).  Dump a window on both sides and
+ * include an index with each non-zero word so the frames can be decoded.
  */
 static int xnu_stack_watchdog(void *unused)
 {
+	static char buf[8192];
+
 	while (!kthread_should_stop()) {
 		if (READ_ONCE(xnu_run_active) && xnu_stack_host &&
-		    xnu_stack_top) {
-			/*
-			 * The saved RSP is the value left by the upcall
-			 * prologue: seven pushes plus the alignment adjustment
-			 * below the return address pushed by XNU's call to the
-			 * hook.  The saved registers, that return address and
-			 * the live vstart/Idle_PTs_init frames are therefore
-			 * ABOVE this RSP, not below it.  Dumping downwards only
-			 * shows stale frames from earlier PE_init_platform()
-			 * calls.  Walk upwards to the stack top instead.
-			 */
+		    xnu_stack_top && READ_ONCE(xnu_stack_dump_seq) < 3) {
 			u64_t rsp = READ_ONCE(worlds[0].xnu_rsp);
-			char buf[3072];
-			u64_t *words;
-			int nwords, n, i;
+			u64_t stack_base = (u64_t)(uintptr_t)xnu_stack_host;
+			u64_t base = rsp > stack_base + 2048 ?
+			    rsp - 2048 : stack_base;
+			u64_t *words = (u64_t *)(uintptr_t)base;
+			int nwords = (int)((xnu_stack_top - base) >> 3) + 1;
+			int seq = READ_ONCE(xnu_stack_dump_seq) + 1;
+			int n, i;
 
-			if (rsp < xnu_stack_top - 4096 || rsp > xnu_stack_top)
-				rsp = xnu_stack_top - 512;
-			nwords = (int)((xnu_stack_top - rsp) >> 3) + 1;
-			if (nwords < 1)
-				nwords = 1;
-			if (nwords > 128)
-				nwords = 128;
-			words = (u64_t *)(uintptr_t)rsp;
+			if (nwords > 320)
+				nwords = 320;
 			n = snprintf(buf, sizeof(buf),
-			    "xnu stack top=0x%llx rsp=0x%llx base=0x%llx words=%d:",
-			    (unsigned long long)xnu_stack_top,
+			    "xnu stack #%d top=0x%llx rsp=0x%llx base=0x%llx words=%d:",
+			    seq, (unsigned long long)xnu_stack_top,
 			    (unsigned long long)rsp,
-			    (unsigned long long)(uintptr_t)words, nwords);
-			for (i = 0; i < nwords && n < (int)sizeof(buf) - 32; i++)
-				n += snprintf(buf + n, sizeof(buf) - n,
-				    " %016llx",
-				    (unsigned long long)READ_ONCE(words[i]));
+			    (unsigned long long)base, nwords);
+			for (i = 0; i < nwords && n < (int)sizeof(buf) - 32; i++) {
+				u64_t v = READ_ONCE(words[i]);
+
+				if (v)
+					n += snprintf(buf + n, sizeof(buf) - n,
+					    " [%d]=%016llx", i,
+					    (unsigned long long)v);
+			}
 			if (n > 0)
 				logs(buf);
+			WRITE_ONCE(xnu_stack_dump_seq, seq);
 		}
 		msleep_interruptible(1000);
 	}
@@ -793,6 +795,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	    (unsigned long long)cr3_phys, (unsigned long long)stack_top,
 	    (unsigned long long)xnu_upcall_va, (unsigned long long)ba_phys);
 	logs("xnu86: entering vstart\n");
+	WRITE_ONCE(xnu_stack_dump_seq, 0);
 	WRITE_ONCE(xnu_run_active, 1);
 	r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
 	WRITE_ONCE(xnu_run_active, 0);
