@@ -990,7 +990,7 @@ index b2aae03..af01ff3 100644
  		/*
  		 * Ensure that updates to my processor and pset state,
  		 * made by the IPI source processor before sending the IPI,
-@@ -9984,3 +9987,45 @@ sysctl_clutch_thread_group_cpu_time_for_thread(__unused thread_t thread,
+@@ -9984,3 +9987,46 @@ sysctl_clutch_thread_group_cpu_time_for_thread(__unused thread_t thread,
  #endif /* !SCHED_TEST_HARNESS */
  
  #endif /* DEVELOPMENT || DEBUG */
