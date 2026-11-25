@@ -74,6 +74,8 @@ extern unsigned long xnu_host_cr3_x86;
 void xnu_world_upcall_x86(void);
 /* Module-text hook gate: restore Linux CR3, then jump to the upcall. */
 void xnu_world_hook_trampoline_x86(void);
+/* Diagnostic patch over _kprintf: log its format string as a KPRINTF upcall. */
+void xnu_world_kprintf_probe_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
 /* Translate XNU virtual addresses in hook arguments to host aliases. */

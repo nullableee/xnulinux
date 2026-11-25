@@ -453,11 +453,15 @@ static const char *fki_phase_name(unsigned long p)
 static int fki_phase_logger(void *unused)
 {
 	unsigned long last = READ_ONCE(fki_x86_phase);
+	unsigned int tick = 0;
 
 	while (!fki_thread_should_stop()) {
 		unsigned long p = READ_ONCE(fki_x86_phase);
 
-		if (p != last) {
+		/* Also log a stable phase every 100 ms: if XNU hangs inside a
+		 * long run, the phase stops changing and a change-only logger
+		 * would leave no trace at all. */
+		if (p != last || ++tick >= 20) {
 			char buf[160];
 			int n = snprintf(buf, sizeof(buf), "phase: %lu %s arg=0x%lx\n",
 			    p, fki_phase_name(p), READ_ONCE(fki_x86_phase_arg));
@@ -465,6 +469,7 @@ static int fki_phase_logger(void *unused)
 			if (n > 0)
 				fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
 			last = p;
+			tick = 0;
 		}
 		fki_msleep(5);
 	}

@@ -38,6 +38,9 @@ static int nr_cpus = 1;
 module_param(nr_cpus, int, 0444);
 static int allow_unhosted;
 module_param(allow_unhosted, int, 0444);
+/* Diagnostic: turn XNU's kprintf() into fsynced KPRINTF upcalls. */
+static int kprintf_probe;
+module_param(kprintf_probe, int, 0444);
 
 #define MAX_XNU_CPUS 16
 static struct xnu_world_x86 worlds[MAX_XNU_CPUS];
@@ -440,8 +443,26 @@ static int write_xnu_globals(void)
 
 		if (serial_va)
 			*(u8 *)serial_va = 0xc3; /* ret: no physical COM1 on host */
-		if (kprintf_va)
-			*(u8 *)kprintf_va = 0xc3; /* ret: avoid polling COM1 UART */
+		if (kprintf_va) {
+			if (kprintf_probe) {
+				long rel = (long)xnu_world_kprintf_probe_x86 -
+				    ((long)kprintf_va + 5);
+				u8 jmp[5] = {
+				    0xe9,
+				    (u8)(rel & 0xff),
+				    (u8)((rel >> 8) & 0xff),
+				    (u8)((rel >> 16) & 0xff),
+				    (u8)((rel >> 24) & 0xff),
+				};
+
+				memcpy(kprintf_va, jmp, sizeof(jmp));
+				pr_info("xnu86: kprintf probe at 0x%llx -> %p\n",
+				    (unsigned long long)a_kprintf,
+				    xnu_world_kprintf_probe_x86);
+			} else {
+				*(u8 *)kprintf_va = 0xc3; /* ret: avoid COM1 UART */
+			}
+		}
 	}
 	return 0;
 }

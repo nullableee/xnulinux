@@ -238,6 +238,23 @@ xnu_world_hook_trampoline_x86:
 	movq	$20, fki_x86_phase(%rip)
 	movq	%rax, %cr3
 	jmp	xnu_world_upcall_x86
+
+/*
+ * Diagnostic replacement for _kprintf's first bytes. XNU calls kprintf with
+ * rdi = format string (varargs in the remaining argument registers). Turn it
+ * into a normal LINUX64_CALL_KPRINTF(998, format, 0) upcall so the host can
+ * fsync the format string before returning to the caller. The stack still
+ * holds the original return address, so the upcall's `ret` resumes XNU.
+ */
+	.globl xnu_world_kprintf_probe_x86
+	.type  xnu_world_kprintf_probe_x86, @function
+xnu_world_kprintf_probe_x86:
+	endbr64
+	movq	%rdi, %rsi		/* format string -> a1 */
+	movl	$998, %edi		/* LINUX64_CALL_KPRINTF */
+	xorl	%edx, %edx		/* a2 */
+	jmp	xnu_world_hook_trampoline_x86
+	.size	xnu_world_kprintf_probe_x86, . - xnu_world_kprintf_probe_x86
 	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86
 
 	.section .note.GNU-stack,"",@progbits
