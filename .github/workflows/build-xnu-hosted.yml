@@ -50,7 +50,7 @@ jobs:
           git -C "$XNU" fetch -q --depth 1 origin \
             refs/tags/xnu-12377.121.6:refs/tags/upstream
           git -C "$XNU" checkout -q upstream
-          for p in "$GITHUB_WORKSPACE"/x86_64/patches/000*.patch; do
+          for p in "$GITHUB_WORKSPACE"/x86_64/patches/0*.patch; do
             echo "apply $(basename "$p")"
             git -C "$XNU" apply "$p"
           done

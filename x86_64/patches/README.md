@@ -9,7 +9,7 @@ Apply in order to a pristine source tree:
 for p in x86_64/patches/0*.patch; do git apply "$p"; done
 ```
 
-All six patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
+All ten patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
 (verified with a detached worktree at the baseline commit).
 
 | # | File | Contents | Status |
@@ -20,6 +20,10 @@ All six patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
 | 0004 | `0004-linux64-x86-userland.patch` | Arch-neutral userland fixes + `nosys` diagnostic ported to `bsd/dev/i386/systemcalls.c` | applied OK |
 | 0005 | `0005-linux64-x86-pv-locks.patch` | `CONFIG_PV_TICKET`, replace KVM `vmcall`/`hlt` with host kick and host yield | applied OK |
 | 0006 | `0006-linux64-x86-exceptions.patch` | `#PF/#GP/#UD/#SS` reporting from `kernel_trap`/`user_trap`, first-user-entry notification, SMP entry via `i386_init_slave()` | applied OK |
+| 0007 | `0007-macos-clt-build-env.patch` | CLT-only tool paths and SDK defaults for the Actions runner | applied OK |
+| 0008 | `0008-skip-driverkit-exporthdrs.patch` | Skip iig-generated DriverKit header export on CLT runners | applied OK |
+| 0009 | `0009-trustcache-api-stub.patch` | Minimal `TrustCache/API.h` stub for missing SDK header | applied OK |
+| 0010 | `0010-sdk-header-stubs.patch` | Minimal CoreEntitlements V2 and DriverKit/OSObject stubs | applied OK |
 
 ## Still missing after this series
 
