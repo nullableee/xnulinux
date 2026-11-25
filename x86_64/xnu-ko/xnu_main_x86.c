@@ -102,13 +102,22 @@ static int xnu_stack_watchdog(void *unused)
 	while (!kthread_should_stop()) {
 		if (READ_ONCE(xnu_run_active) && xnu_stack_host &&
 		    xnu_stack_top) {
-			char buf[768];
-			u64_t *words = (u64_t *)(xnu_stack_top - 256);
+			/* Dump below the RSP saved at the last upcall: that is
+			 * where the currently active XNU frames live. */
+			u64_t rsp = READ_ONCE(worlds[0].xnu_rsp);
+			char buf[3072];
+			u64_t *words;
 			int n, i;
 
-			n = snprintf(buf, sizeof(buf), "xnu stack top=0x%llx:",
-			    (unsigned long long)xnu_stack_top);
-			for (i = 0; i < 32 && n < (int)sizeof(buf) - 32; i++)
+			if (rsp < xnu_stack_top - 4096 || rsp > xnu_stack_top)
+				rsp = xnu_stack_top - 512;
+			words = (u64_t *)(uintptr_t)(rsp - 1024);
+			n = snprintf(buf, sizeof(buf),
+			    "xnu stack top=0x%llx rsp=0x%llx base=0x%llx:",
+			    (unsigned long long)xnu_stack_top,
+			    (unsigned long long)rsp,
+			    (unsigned long long)(uintptr_t)words);
+			for (i = 0; i < 128 && n < (int)sizeof(buf) - 32; i++)
 				n += snprintf(buf + n, sizeof(buf) - n,
 				    " %016llx",
 				    (unsigned long long)READ_ONCE(words[i]));
