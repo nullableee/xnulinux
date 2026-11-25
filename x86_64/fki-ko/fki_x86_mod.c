@@ -520,16 +520,20 @@ int fki_x86_shared_alloc(unsigned long size, struct fki_region *r)
 	if (!r || !size)
 		return -EINVAL;
 	nr_pages = PFN_UP(size);
+	/* XNU's boot_args stores kaddr/MemoryMap as 32-bit physical addresses,
+	 * so every region handed to it must come from ZONE_DMA32. */
 	pr_info("fki-x86: alloc %lu contiguous pages on node %d\n",
 	    nr_pages, numa_node_id());
 	/* alloc_contig_pages() does not accept NUMA_NO_NODE: it indexes
 	 * node_zonelist(nid) directly. */
-	page = alloc_contig_pages_noprof(nr_pages, GFP_KERNEL | __GFP_ZERO,
-	    numa_node_id(), NULL);
+	page = alloc_contig_pages_noprof(nr_pages,
+	    GFP_KERNEL | GFP_DMA32 | __GFP_ZERO, numa_node_id(), NULL);
 	if (!page)
 		return -ENOMEM;
 	r->va = page_address(page);
 	r->pa = page_to_phys(page);
+	pr_info("fki-x86:   va=%p pa=0x%llx\n", r->va,
+	    (unsigned long long)r->pa);
 	r->size = nr_pages << PAGE_SHIFT;
 	r->handle = page;
 	return 0;
