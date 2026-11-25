@@ -148,7 +148,9 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved, struct fki
 /* Swap only the GS-base pair and syscall MSRs (caller is already in the foreign world). */
 void fki_x86_swap_user_state(const struct fki_x86_state *load, struct fki_x86_state *save);
 
-/* Give Linux a slice of this CPU while a foreign kernel is in fki_x86_enter(). */
+/* Give Linux a slice of this CPU. Called from the Linux world, after fki_x86_leave():
+ * preemption and IRQs are already on, and the next fki_x86_enter() disables them again.
+ * Do not toggle preempt_count here: doing so underflows it and corrupts the host scheduler. */
 void fki_x86_idle_until(fki_u64 counter_deadline, fki_u64 max_ns, const volatile unsigned int *wake);
 void fki_x86_yield(void);
 

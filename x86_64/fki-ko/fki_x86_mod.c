@@ -325,64 +325,46 @@ void fki_x86_kick_cpu(int cpu)
 }
 EXPORT_SYMBOL(fki_x86_kick_cpu);
 
+/*
+ * These helpers run from the Linux world after fki_x86_leave() has already
+ * restored Linux's IRQ and preemption state.  The old version called
+ * preempt_enable() here, driving preempt_count negative while sleeping; with
+ * panic_on_warn that makes wait/schedule unreliable and can corrupt the host
+ * scheduler.  The upcall's fki_x86_enter() re-disables both on return.
+ */
 void fki_x86_idle_until(fki_u64 counter_deadline, fki_u64 max_ns,
     const volatile unsigned int *wake)
 {
-	unsigned long flags;
-	long timeout;
 	int cpu;
 
-	local_irq_save(flags);
+	might_sleep();
 	cpu = smp_processor_id();
 	x86_wake_word[cpu] = wake;
 	if (wake && *wake) {
 		x86_wake_word[cpu] = NULL;
-		local_irq_restore(flags);
 		return;
 	}
 	reinit_completion(&x86_wake[cpu]);
-	preempt_enable();
-	local_irq_enable();
 
 	/* TODO(stage 3): arm an hrtimer at counter_deadline; for now the host
 	 * wakes us from its own timer or from fki_x86_kick_cpu(). */
-	timeout = wait_for_completion_timeout(&x86_wake[cpu],
+	wait_for_completion_timeout(&x86_wake[cpu],
 	    usecs_to_jiffies(max_ns / NSEC_PER_USEC));
 	(void)counter_deadline;
-	(void)timeout;
-
-	local_irq_disable();
-	preempt_disable();
 	x86_wake_word[cpu] = NULL;
-	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(fki_x86_idle_until);
 
 void fki_x86_yield(void)
 {
-	unsigned long flags;
-
-	local_irq_save(flags);
-	preempt_enable();
-	local_irq_enable();
 	cond_resched();
-	local_irq_disable();
-	preempt_disable();
-	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(fki_x86_yield);
 
 void fki_linux_runs_ext(void (*fn)(void *), void *arg)
 {
-	unsigned long flags;
-
-	local_irq_save(flags);
-	preempt_enable();
-	local_irq_enable();
+	might_sleep();
 	fn(arg);
-	local_irq_disable();
-	preempt_disable();
-	local_irq_restore(flags);
 }
 
 /* ---- CPU discovery --------------------------------------------------------- */
