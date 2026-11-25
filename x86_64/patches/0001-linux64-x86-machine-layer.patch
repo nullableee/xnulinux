@@ -503,7 +503,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/osfmk/i386/linux64_x86.c
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,135 @@
 +/*
 + * LINUX64 (xnulinux), x86_64 machine layer: the XNU side of the hosted state.
 + *
@@ -639,7 +639,7 @@ index 0000000..1111111
 +	linux64_call2(LINUX64_CALL_USER_ENTER, 0, 0);
 +	panic("linux64_user_run: user entry not ported yet");
 +}
-+diff --git a/osfmk/i386/machine_routines.c b/osfmk/i386/machine_routines.c
+diff --git a/osfmk/i386/machine_routines.c b/osfmk/i386/machine_routines.c
 index d7e433d..f01c0c0 100644
 --- a/osfmk/i386/machine_routines.c
 +++ b/osfmk/i386/machine_routines.c
