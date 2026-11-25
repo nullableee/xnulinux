@@ -1,19 +1,20 @@
 diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
-index d66e3f8..ad38b7a 100644
+index d66e3f8..f19e61d 100644
 --- a/osfmk/i386/i386_init.c
 +++ b/osfmk/i386/i386_init.c
-@@ -699,6 +699,10 @@ vstart(vm_offset_t boot_args_start)
- 	uint64_t        gsbase;
+@@ -700,6 +700,11 @@ vstart(vm_offset_t boot_args_start)
  #endif
+ 
  
 +	if (linux64_hook) {
 +		linux64_call2(LINUX64_CALL_KPRINTF,
 +		    (unsigned long)"xnu: vstart entry\n", 0);
 +	}
- 
++
  	postcode(VSTART_ENTRY);
  
-@@ -742,6 +746,10 @@ vstart(vm_offset_t boot_args_start)
+ 	/*
+@@ -742,6 +747,10 @@ vstart(vm_offset_t boot_args_start)
  
  		if (kernelBootArgs->Version >= 2 && kernelBootArgs->Revision >= 1 &&
  		    kernelBootArgs->KC_hdrs_vaddr != 0) {
@@ -24,7 +25,7 @@ index d66e3f8..ad38b7a 100644
  			/*
  			 * slide the header addresses in all mach-o segments and sections, and
  			 * perform any new-style chained-fixup sliding for kexts, as necessary.
-@@ -749,6 +757,10 @@ vstart(vm_offset_t boot_args_start)
+@@ -749,6 +758,10 @@ vstart(vm_offset_t boot_args_start)
  			 * that correspond to the kexts present in the primary KC, into slid addresses.
  			 */
  			i386_slide_and_rebase_image((uintptr_t)ml_static_ptovirt(kernelBootArgs->KC_hdrs_vaddr));
@@ -35,7 +36,8 @@ index d66e3f8..ad38b7a 100644
  		}
  
  		/*
-@@ -766,11 +778,27 @@ vstart(vm_offset_t boot_args_start)
+@@ -765,10 +778,26 @@ vstart(vm_offset_t boot_args_start)
+ #if KASAN
  		kasan_reserve_memory(kernelBootArgs);
  #endif
  
