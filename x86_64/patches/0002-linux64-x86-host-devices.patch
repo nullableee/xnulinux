@@ -18,7 +18,7 @@ index d24535d..386e6ad 100644
   */
  
  #include <sys/param.h>
-+#include <linux64/linux64.h>
++#include <linux64/linux64_x86_64.h>
  #include <sys/kernel.h>
  #include <sys/mount.h>
  #include <sys/namei.h>
@@ -38,7 +38,7 @@ index d24535d..386e6ad 100644
  
  int mdevBMajor = -1;
  int mdevCMajor = -1;
-@@ -180,6 +183,38 @@ static int      mdevioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct
+@@ -180,6 +183,33 @@ static int      mdevioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct
  dev_t           mdevadd(int devid, uint64_t base, unsigned int size, int phys);
  dev_t           mdevlookup(int devid);
  void            mdevremoveall(void);
@@ -53,13 +53,8 @@ index d24535d..386e6ad 100644
 +static long
 +mdev_host_call(unsigned long stage, unsigned long arg)
 +{
-+	register unsigned long x0 __asm__("x0") = stage;
-+	register unsigned long x1 __asm__("x1") = arg;
-+	register unsigned long x2 __asm__("x2") = 0;
-+	__asm__ volatile ("blr %3" : "+r"(x0), "+r"(x1), "+r"(x2) : "r"(linux64_hook)
-+	    : "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
-+	    "x14", "x15", "x16", "x17", "x30", "cc", "memory");
-+	return (long)x0;
++	/* SysV upcall: rdi = call/stage, rsi = arg, rdx = 0, rax = hook. */
++	return (long)linux64_call2((enum linux64_call)stage, arg, 0);
 +}
 +
 +static int
