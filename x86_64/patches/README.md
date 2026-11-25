@@ -23,7 +23,7 @@ All ten patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
 | 0007 | `0007-macos-clt-build-env.patch` | CLT-only tool paths and SDK defaults for the Actions runner | applied OK |
 | 0008 | `0008-skip-driverkit-exporthdrs.patch` | Skip iig-generated DriverKit header export on CLT runners | applied OK |
 | 0009 | `0009-trustcache-api-stub.patch` | Minimal `TrustCache/API.h` stub for missing SDK header | applied OK |
-| 0010 | `0010-sdk-header-stubs.patch` | Minimal CodeSignature, CoreEntitlements V2 and generated DriverKit header stubs | applied OK |
+| 0010 | `0010-sdk-header-stubs.patch` | Minimal CodeSignature, CoreEntitlements V2, generated DriverKit and libfirehose header stubs | applied OK |
 
 ## Still missing after this series
 

@@ -3,12 +3,12 @@ From: xnulinux <xnulinux@local>
 Date: Wed, 25 Nov 2026 00:00:00 +0000
 Subject: [PATCH] LINUX64: stub missing SDK headers for hosted x86_64 build
 
-The public macOS SDK lacks CodeSignature, CoreEntitlements V2 and
-iig-generated DriverKit headers. Provide the minimal declarations needed
-by amfi, code signing and libkern C++.
+The public macOS SDK lacks CodeSignature, CoreEntitlements V2,
+iig-generated DriverKit and libfirehose private headers. Provide the minimal
+declarations needed by amfi, code signing, libkern C++ and os/log.
 
 ---
- 22 files changed, 315 insertions(+)
+ 23 files changed, 377 insertions(+)
 
 diff --git a/EXTERNAL_HEADERS/CodeSignature/Entitlements.h b/EXTERNAL_HEADERS/CodeSignature/Entitlements.h
 new file mode 100644
@@ -435,3 +435,70 @@ index 0000000..f782aa8
 +#define OSObject_KernelMethods
 +
 +#endif /* _DRIVERKIT_OSOBJECT_H_ */
+diff --git a/EXTERNAL_HEADERS/os/firehose_buffer_private.h b/EXTERNAL_HEADERS/os/firehose_buffer_private.h
+new file mode 100644
+index 0000000..417e0d9
+--- /dev/null
++++ b/EXTERNAL_HEADERS/os/firehose_buffer_private.h
+@@ -0,0 +1,61 @@
++/* SPDX-License-Identifier: APSL-2.0 */
++/*
++ * Minimal os/firehose_buffer_private.h stub for the hosted x86_64 build.
++ * The real header ships with libfirehose, which is not available in the CLT
++ * runner. The hosted kernel does not have a logd endpoint, so the buffer
++ * helpers are no-ops and tracepoint reservation always fails.
++ */
++#ifndef _OS_FIREHOSE_BUFFER_PRIVATE_H_
++#define _OS_FIREHOSE_BUFFER_PRIVATE_H_
++
++#include <stdint.h>
++#include <stdbool.h>
++#include <firehose/firehose_types_private.h>
++#include <firehose/tracepoint_private.h>
++
++#define FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT       1
++#define FIREHOSE_BUFFER_KERNEL_DEFAULT_CHUNK_COUNT 1
++#define FIREHOSE_BUFFER_KERNEL_DEFAULT_IO_PAGES   1
++
++struct firehose_buffer_range_s {
++	uint16_t fbr_offset;
++	uint16_t fbr_length;
++};
++
++static inline firehose_tracepoint_t
++__firehose_buffer_tracepoint_reserve(uint64_t stamp, firehose_stream_t stream,
++    uint16_t pubsize, uint16_t privsize, uint8_t **privptr)
++{
++	(void)stamp; (void)stream; (void)pubsize; (void)privsize; (void)privptr;
++	return NULL;
++}
++
++static inline void
++__firehose_buffer_tracepoint_flush(firehose_tracepoint_t ft,
++    firehose_tracepoint_id_u ftid)
++{
++	(void)ft; (void)ftid;
++}
++
++static inline firehose_buffer_t
++__firehose_buffer_create(size_t *size)
++{
++	*size = 0;
++	return NULL;
++}
++
++static inline int
++__firehose_kernel_configuration_valid(uint8_t chunk_count, uint8_t io_pages)
++{
++	(void)chunk_count; (void)io_pages;
++	return 0;
++}
++
++static inline bool
++__firehose_merge_updates(firehose_push_reply_t update)
++{
++	(void)update;
++	return false;
++}
++
++#endif /* _OS_FIREHOSE_BUFFER_PRIVATE_H_ */
