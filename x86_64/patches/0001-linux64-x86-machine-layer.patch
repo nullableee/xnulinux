@@ -24,7 +24,7 @@ new file mode 100644
 index 0000000..ccc7ff6
 --- /dev/null
 +++ b/EXTERNAL_HEADERS/linux64/linux64_abi_x86_64.h
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,126 @@
 +// SPDX-License-Identifier: APSL-2.0
 +/*
 + * Copyright (c) 2026 xnulinux contributors. All rights reserved.
@@ -503,7 +503,7 @@ new file mode 100644
 index 0000000..15fb4d8
 --- /dev/null
 +++ b/osfmk/i386/linux64_x86.c
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,137 @@
 +/*
 + * LINUX64 (xnulinux), x86_64 machine layer: the XNU side of the hosted state.
 + *
