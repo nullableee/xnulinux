@@ -215,7 +215,9 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 	if (foreign) {
 		fki_u64 prev_cr3 = foreign->cr3;
 
+		fki_x86_phase_set(34, (unsigned long)foreign);
 		x86_save_state(foreign);
+		fki_x86_phase_set(35, foreign->cr3);
 		if (prev_cr3)
 			foreign->cr3 = prev_cr3;
 	}
@@ -229,7 +231,7 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 	 */
 	if (foreign && foreign->xsave_va && foreign->xsave_size)
 		x86_xsave((void *)foreign->xsave_va);
-	fki_x86_phase_set(33, 0);
+	fki_x86_phase_set(36, 0);
 	if (saved->xsave_va && saved->xsave_size)
 		x86_xrstor((const void *)saved->xsave_va);
 	fki_x86_ibt_restore(this_cpu_read(x86_saved_cr4));
@@ -445,6 +447,9 @@ static const char *fki_phase_name(unsigned long p)
 	case 31: return "leave_pre_cr3";
 	case 32: return "leave_done";
 	case 33: return "leave_xsaved";
+	case 34: return "leave_save_state";
+	case 35: return "leave_saved";
+	case 36: return "leave_xnu_xsaved";
 	case 40: return "host_hook";
 	default: return "?";
 	}
