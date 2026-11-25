@@ -79,32 +79,6 @@ index fac307f..bfc5687 100644
  #include <sys/systm.h>
  #include <sys/filedesc.h>
  #include <sys/kernel.h>
-@@ -113,11 +114,25 @@
- #include <kern/waitq.h>
- #include <kern/ipc_kobject.h>
- #include <kern/ipc_misc.h>
-+#include <pexpert/pexpert.h>
- #include <kern/ast.h>
- 
- #include <vm/vm_protos.h>
- #include <mach/mach_port.h>
- 
-+/* LINUX64: hosted with the amfi_get_out_of_my_way boot-arg, code signing lets any locally built code load (kern_mman.c too) */
-+int linux64_amfi_off(void);
-+int
-+linux64_amfi_off(void)
-+{
-+	static int off = -1;
-+	if (off < 0) {
-+		int v = 0;
-+		off = PE_parse_boot_argn("amfi_get_out_of_my_way", &v, sizeof(v)) && v != 0;
-+	}
-+	return off;
-+}
-+
- #include <security/audit/audit.h>
- #if CONFIG_MACF
- #include <security/mac_framework.h>
 @@ -2525,6 +2540,32 @@ sys_dup2(proc_t p, struct dup2_args *uap, int32_t *retval)
  	return dup2(p, p_cred, uap->from, uap->to, retval);
  }
