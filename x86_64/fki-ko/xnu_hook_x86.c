@@ -79,10 +79,21 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	xnu_upcall_count++;
 
 	if (call == LINUX64_CALL_KPRINTF) {
-		if (time_before(jiffies, last_kprintf_log + KPRINTF_LOG_INTERVAL))
-			log_upcall = 0;
-		else
+		const char *p = (const char *)(uintptr_t)hx(a1);
+
+		/* The vstart breadcrumbs from patch 0012 are only a handful of
+		 * KPRINTF upcalls. Never rate-limit them: losing them makes the
+		 * early-boot trace useless while a noisy kprintf() loop still
+		 * gets capped below. */
+		if (p && !strncmp(p, "xnu: ", 5)) {
+			log_upcall = 1;
 			last_kprintf_log = jiffies;
+		} else if (time_before(jiffies,
+		    last_kprintf_log + KPRINTF_LOG_INTERVAL)) {
+			log_upcall = 0;
+		} else {
+			last_kprintf_log = jiffies;
+		}
 	}
 
 	fki_x86_phase_set(40, call);
