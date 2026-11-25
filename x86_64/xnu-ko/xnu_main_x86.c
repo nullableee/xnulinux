@@ -43,6 +43,7 @@ static struct xnu_region {
 	struct fki_region pt;
 	struct fki_region stack;
 	struct fki_region xsave;
+	struct fki_region tramp;
 } mem;
 
 static struct xnu_image_x86 img;
@@ -71,29 +72,46 @@ static void logs(const char *s)
 #define PT_E_WRITABLE     0x002
 #define PT_E_LARGE        0x080
 
+/*
+ * Host kernel text is not mapped by the minimal XNU page tables. Put a tiny
+ * trampoline in shared DMA32 memory instead: it switches CR3 back to Linux and
+ * jumps to xnu_world_upcall_x86(), which then restores the rest of the world.
+ * The trampoline and the initial XNU stack live in one 2 MiB PDE.
+ */
+#define XNU_EXTRA_VA      0xffffff8040000000ULL
+#define XNU_UPCALL_VA     XNU_EXTRA_VA
+#define XNU_STACK_VA      (XNU_EXTRA_VA + PAGE_SIZE)
+
 struct init_pt {
 	u64_t *pml4;
 	u64_t *pdpt_id;
 	u64_t *pde_id;
 	u64_t *pdpt_k;
 	u64_t *pde_k;
+	u64_t *pde_extra;
+	u64_t *pte_extra;
 	u64_t **pte_k;
 	unsigned long n_pte_pages;
 	struct fki_region region;
 };
 
 static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
-    u64_t vmhigh, u64_t map_top, u64_t *out_phys)
+    u64_t vmhigh, u64_t map_top, u64_t tramp_pa, u64_t stack_pa,
+    u64_t stack_size, u64_t *out_phys)
 {
 	const unsigned long id_n_pde = DIV_ROUND_UP(map_top, 2UL << 20);
 	const unsigned long k_pages = DIV_ROUND_UP(vmhigh - vmlow, PAGE_SIZE);
 	const unsigned long k_first_pt = (vmlow >> PAGE_SHIFT) & 0x1ffUL;
 	const unsigned long k_n_pte = DIV_ROUND_UP(k_pages + k_first_pt, 512UL);
+	const unsigned long stack_pages = stack_size >> PAGE_SHIFT;
 	unsigned long pt_size, i, n;
 	u64_t pa;
 
+	if (!stack_pages || stack_pages > 511)
+		return -EINVAL;
+
 	memset(pt, 0, sizeof(*pt));
-	pt_size = 5 * PAGE_SIZE + k_n_pte * PAGE_SIZE;
+	pt_size = 7 * PAGE_SIZE + k_n_pte * PAGE_SIZE;
 	if (fki_x86_shared_alloc(pt_size, &pt->region))
 		return -ENOMEM;
 	pt->pte_k = kzalloc(k_n_pte * sizeof(*pt->pte_k), GFP_KERNEL);
@@ -109,8 +127,11 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 	pt->pde_id = (u64_t *)((char *)pt->region.va + 2 * PAGE_SIZE);
 	pt->pdpt_k = (u64_t *)((char *)pt->region.va + 3 * PAGE_SIZE);
 	pt->pde_k = (u64_t *)((char *)pt->region.va + 4 * PAGE_SIZE);
+	pt->pde_extra = (u64_t *)((char *)pt->region.va + 5 * PAGE_SIZE);
+	pt->pte_extra = (u64_t *)((char *)pt->region.va + 6 * PAGE_SIZE);
 	for (i = 0; i < k_n_pte; i++)
-		pt->pte_k[i] = (u64_t *)((char *)pt->region.va + (5 + i) * PAGE_SIZE);
+		pt->pte_k[i] =
+		    (u64_t *)((char *)pt->region.va + (7 + i) * PAGE_SIZE);
 
 	memset(pt->region.va, 0, pt_size);
 
@@ -126,7 +147,7 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 	pt->pdpt_k[0] = (pa + 4 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 	for (i = 0; i < k_n_pte; i++)
 		pt->pde_k[i] =
-		    (pa + (5 + i) * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+		    (pa + (7 + i) * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 
 	for (n = 0; n < k_pages; n++) {
 		unsigned long idx = k_first_pt + n;
@@ -138,6 +159,16 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 		pt->pte_k[pd][pt_i] =
 		    (kc_pa + n * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 	}
+
+	/* XNU-visible upcall trampoline and initial stack. */
+	pt->pdpt_k[1] =
+	    (pa + 5 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+	pt->pde_extra[0] =
+	    (pa + 6 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+	pt->pte_extra[0] = tramp_pa | PT_E_PRESENT | PT_E_WRITABLE;
+	for (i = 0; i < stack_pages; i++)
+		pt->pte_extra[1 + i] =
+		    (stack_pa + i * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 
 	*out_phys = pa;
 	return 0;
@@ -188,18 +219,66 @@ static int build_efi_map(u64_t total)
 
 /* ---- XNU globals ---------------------------------------------------------- */
 
+static void *xnu_va_to_host(u64_t va)
+{
+	if (va < img.vmlow || va >= img.vmhigh)
+		return NULL;
+	return (void *)((char *)mem.kc.va + (va - img.vmlow));
+}
+
+static u64_t x86_read_cr3(void)
+{
+	u64_t v;
+
+	asm volatile("mov %%cr3, %0" : "=r" (v));
+	return v;
+}
+
+/*
+ * XNU calls linux64_hook with an indirect call, but host module text is not
+ * mapped by XNU's page tables. Point the hook at a trampoline in shared memory:
+ * switch CR3 back to Linux, then jump to the real upcall with rdi/rsi/rdx
+ * untouched. The upcall restores the remaining world state on Linux's CR3.
+ */
+static void write_upcall_trampoline(void *dst, u64_t cr3, u64_t upcall)
+{
+	u8 *p = dst;
+
+	*p++ = 0x48; *p++ = 0xb8;              /* movabs $cr3, %rax */
+	memcpy(p, &cr3, sizeof(cr3)); p += sizeof(cr3);
+	*p++ = 0x0f; *p++ = 0x22; *p++ = 0xd8; /* mov %rax, %cr3 */
+	*p++ = 0x49; *p++ = 0xbb;              /* movabs $upcall, %r11 */
+	memcpy(p, &upcall, sizeof(upcall)); p += sizeof(upcall);
+	*p++ = 0x41; *p++ = 0xff; *p++ = 0xe3; /* jmp *%r11 */
+}
+
 static int write_xnu_globals(void)
 {
-	u64_t hook = a_hook, slide = xnu_slide;
+	u64_t hook = XNU_UPCALL_VA, slide = xnu_slide;
+	void *hook_va, *slide_va;
 
 	if (!a_hook)
 		return allow_unhosted ? 0 : -EINVAL;
-	memcpy((void *)a_hook, &hook, sizeof(hook));
+	hook_va = xnu_va_to_host(a_hook);
+	if (!hook_va) {
+		pr_err("xnu86: _linux64_hook 0x%llx outside kernel image\n",
+		    (unsigned long long)a_hook);
+		return -EINVAL;
+	}
+	memcpy(hook_va, &hook, sizeof(hook));
 	if (a_slide) {
-		memcpy((void *)a_slide, &slide, sizeof(slide));
+		slide_va = xnu_va_to_host(a_slide);
+		if (!slide_va) {
+			pr_warn("xnu86: _linux64_slide 0x%llx outside kernel image\n",
+			    (unsigned long long)a_slide);
+		} else {
+			memcpy(slide_va, &slide, sizeof(slide));
+		}
 	} else {
 		pr_warn("xnu86: _linux64_slide not found\n");
 	}
+	pr_info("xnu86: _linux64_hook=0x%llx -> upcall=0x%llx\n",
+	    (unsigned long long)a_hook, (unsigned long long)hook);
 	return 0;
 }
 
@@ -234,27 +313,37 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 	struct init_pt pt;
 	u64_t stack_va, xsave_va, cr3_phys;
 	u64_t apic;
+	long r;
 	int err, i;
-
-	err = build_init_pt(&pt, kc_pa, vmlow, vmhigh, ram_mb << 20, &cr3_phys);
-	if (err) {
-		pr_err("xnu86: cannot build initial page tables\n");
-		return err;
-	}
 
 	err = fki_x86_shared_alloc(16 << 10, &mem.stack);
 	if (err) {
-		pr_err("xnu86: cannot allocate XNU stack\n");
-		free_init_pt(&pt);
+		pr_err("xnu86: cannot allocate XNU stack (%d)\n", err);
 		return err;
 	}
-	stack_va = (u64_t)mem.stack.va + mem.stack.size - 16;
+	stack_va = XNU_STACK_VA + mem.stack.size - 16;
+
+	err = fki_x86_shared_alloc(PAGE_SIZE, &mem.tramp);
+	if (err) {
+		pr_err("xnu86: cannot allocate upcall trampoline (%d)\n", err);
+		goto out_stack;
+	}
+
+	err = build_init_pt(&pt, kc_pa, vmlow, vmhigh, ram_mb << 20,
+	    mem.tramp.pa, mem.stack.pa, mem.stack.size, &cr3_phys);
+	if (err) {
+		pr_err("xnu86: cannot build initial page tables (%d)\n", err);
+		goto out_tramp;
+	}
+
+	/* The trampoline switches Linux's CR3 before entering host code. */
+	write_upcall_trampoline(mem.tramp.va, x86_read_cr3(),
+	    (u64_t)(uintptr_t)xnu_world_upcall_x86);
 
 	xsave_va = 0;
 	err = fki_x86_shared_alloc(4096, &mem.xsave);
-	if (!err) {
+	if (!err)
 		xsave_va = (u64_t)mem.xsave.va;
-	}
 
 	nr_cpus = min(nr_cpus, MAX_XNU_CPUS);
 	nr_cpus = min(nr_cpus, fki_x86_num_cpus());
@@ -265,15 +354,26 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 		xnu_worlds_x86[LINUX64_X86_CPU_SLOT(apic)] = &worlds[i];
 	}
 
-	write_xnu_globals();
+	err = write_xnu_globals();
+	if (err)
+		goto out_xsave;
+
+	pr_info("xnu86: stack=0x%llx trampoline=0x%llx cr3=0x%llx\n",
+	    (unsigned long long)stack_va,
+	    (unsigned long long)XNU_UPCALL_VA,
+	    (unsigned long long)cr3_phys);
 	logs("xnu86: entering vstart\n");
-	long r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
+	r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
 	pr_info("xnu86: vstart returned %ld\n", r);
 
+out_xsave:
 	fki_x86_shared_free(&mem.xsave);
-	fki_x86_shared_free(&mem.stack);
 	free_init_pt(&pt);
-	return 0;
+out_tramp:
+	fki_x86_shared_free(&mem.tramp);
+out_stack:
+	fki_x86_shared_free(&mem.stack);
+	return err;
 }
 
 /* ---- init / exit ---------------------------------------------------------- */
