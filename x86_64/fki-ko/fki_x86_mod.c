@@ -219,10 +219,17 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 		if (prev_cr3)
 			foreign->cr3 = prev_cr3;
 	}
-	if (foreign && foreign->xsave_va && foreign->xsave_size)
-		x86_xsave((void *)foreign->xsave_va);
 	fki_x86_phase_set(31, saved->cr3);
 	fki_x86_load_state_asm(saved);
+	/*
+	 * The XSAVE buffers live in the Linux direct map, which XNU's page
+	 * tables do not cover. Saving XNU's FPU state here, after CR3 is back
+	 * to Linux, avoids a #PF under the XNU world (panic_on_warn made that
+	 * a hard hang). Interrupts are still off and preemption still disabled.
+	 */
+	if (foreign && foreign->xsave_va && foreign->xsave_size)
+		x86_xsave((void *)foreign->xsave_va);
+	fki_x86_phase_set(33, 0);
 	if (saved->xsave_va && saved->xsave_size)
 		x86_xrstor((const void *)saved->xsave_va);
 	fki_x86_ibt_restore(this_cpu_read(x86_saved_cr4));
@@ -435,8 +442,9 @@ static const char *fki_phase_name(unsigned long p)
 	case 24: return "upcall_xnu";
 	case 25: return "upcall_abort";
 	case 30: return "leave_entry";
-	case 31: return "leave_load";
+	case 31: return "leave_pre_cr3";
 	case 32: return "leave_done";
+	case 33: return "leave_xsaved";
 	case 40: return "host_hook";
 	default: return "?";
 	}
