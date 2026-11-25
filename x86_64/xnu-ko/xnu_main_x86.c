@@ -445,14 +445,24 @@ static int write_xnu_globals(void)
 			*(u8 *)serial_va = 0xc3; /* ret: no physical COM1 on host */
 		if (kprintf_va) {
 			if (kprintf_probe) {
-				long rel = (long)xnu_world_kprintf_probe_x86 -
-				    ((long)kprintf_va + 5);
-				u8 jmp[5] = {
-				    0xe9,
-				    (u8)(rel & 0xff),
-				    (u8)((rel >> 8) & 0xff),
-				    (u8)((rel >> 16) & 0xff),
-				    (u8)((rel >> 24) & 0xff),
+				/*
+				 * The image mapping and module text are far apart
+				 * (>2 GiB), so a rel32 jmp cannot reach the probe.
+				 * Use an absolute indirect jump instead:
+				 *   movabs $probe, %rax ; jmp *%rax
+				 */
+				u64_t stub = (u64_t)(uintptr_t)xnu_world_kprintf_probe_x86;
+				u8 jmp[12] = {
+				    0x48, 0xb8,
+				    (u8)(stub & 0xff),
+				    (u8)((stub >> 8) & 0xff),
+				    (u8)((stub >> 16) & 0xff),
+				    (u8)((stub >> 24) & 0xff),
+				    (u8)((stub >> 32) & 0xff),
+				    (u8)((stub >> 40) & 0xff),
+				    (u8)((stub >> 48) & 0xff),
+				    (u8)((stub >> 56) & 0xff),
+				    0xff, 0xe0,
 				};
 
 				memcpy(kprintf_va, jmp, sizeof(jmp));
