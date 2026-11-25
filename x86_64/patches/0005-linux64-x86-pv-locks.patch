@@ -1,0 +1,73 @@
+diff --git a/config/MASTER.x86_64 b/config/MASTER.x86_64
+index e27d6d0..db040f1 100644
+--- a/config/MASTER.x86_64
++++ b/config/MASTER.x86_64
+@@ -89,6 +89,7 @@ options     CONFIG_MACF_LAZY_VNODE_LABELS   # Turn on labels, don't preallocate
+ options     NO_NESTED_PMAP                  # <no_nested_pmap>
+ 
+ options		HYPERVISOR				# Apple hypervisor kext support	# <hypervisor>
++options		CONFIG_PV_TICKET			# LINUX64: paravirtual ticket locks	# <config_pv_ticket>
+ 
+ options     CONFIG_MACH_APPROXIMATE_TIME
+ 
+diff --git a/osfmk/i386/lock_ticket_pv.c b/osfmk/i386/lock_ticket_pv.c
+index 103b7e3..419539a 100644
+--- a/osfmk/i386/lock_ticket_pv.c
++++ b/osfmk/i386/lock_ticket_pv.c
+@@ -36,26 +36,26 @@
+ #include <machine/machine_cpu.h>
+ #include <os/atomic_private.h>
+ #include <i386/x86_hypercall.h>
++#include <linux64/linux64.h>
+ 
+ #include <i386/lapic.h>
+ #include <i386/mp.h>
+ 
++/*
++ * LINUX64 (xnulinux): the host is a ring-0 Linux module, not a VMX hypervisor.
++ * vmcall/KVM_HC_KICK_CPU are unavailable; a kick is an APIC-ID-addressed host
++ * call, and waiting lets Linux take this CPU instead of executing hlt.
++ */
+ static inline void
+-kvm_hc_kick_cpu(int cpu_number)
++linux64_kick_cpu(int cpu_number)
+ {
+-	const unsigned long KVM_HC_KICK_CPU = 5;
+-	const unsigned long apicid = ml_get_apicid(cpu_number);
+-	kvmcompat_hypercall2(KVM_HC_KICK_CPU, 0, apicid);
++	linux64_cpu_signal((unsigned int)ml_get_apicid(cpu_number));
+ }
+ 
+ static inline void
+-kvm_hc_wait(boolean_t ien)
++linux64_wait(boolean_t ien __unused)
+ {
+-	if (ien) {
+-		__asm__ volatile ("sti; hlt");
+-	} else {
+-		__asm__ volatile ("hlt");
+-	}
++	linux64_call2(LINUX64_CALL_PREEMPTED, 0, 0);
+ }
+ 
+ static cpumask_t ticket_waitmask_pv;
+@@ -92,7 +92,7 @@ hw_lck_ticket_unlock_kick_pv(hw_lck_ticket_t *lck, uint8_t ticket)
+ 			continue; // vcpu doesn't have the right ticket
+ 		}
+ 
+-		kvm_hc_kick_cpu(tcpunum);
++		linux64_kick_cpu(tcpunum);
+ 		PVTICKET_STATS_INC(kick_count);
+ 		break;
+ 	}
+@@ -148,8 +148,8 @@ hw_lck_ticket_lock_wait_pv(hw_lck_ticket_t *lck, uint8_t mt)
+ 		PVTICKET_STATS_INC(wait_count);
+ 		assert(cticket & HW_LCK_TICKET_LOCK_PVWAITFLAG);
+ 
+-		/* wait for a kick (or other interrupt) */
+-		kvm_hc_wait(istate);
++		/* let Linux run; the unlocker will set our pending-IPI word */
++		linux64_wait(istate);
+ 		/*
+ 		 * Note: if interrupts were enabled at entry to the routine,
+ 		 * even though we disabled them above, they'll be enabled here.

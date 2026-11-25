@@ -1,0 +1,8 @@
+# Kbuild outputs from local module builds; sources only belong in git.
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+Module.symvers
+modules.order

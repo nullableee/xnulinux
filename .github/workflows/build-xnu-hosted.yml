@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: APSL-2.0
+# Build the patched x86_64 XNU kernel on a real macOS runner and publish it as
+# an artifact. Download the artifact on the Linux host and install it as
+# /lib/firmware/xnu26.kernel before loading fki_x86.ko / xnu_x86.ko.
+name: build-hosted-xnu-x86_64
+
+on:
+  push:
+    paths:
+      - 'x86_64/**'
+      - '.github/workflows/build-xnu-hosted.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    name: XNU x86_64 hosted kernel
+    # Intel runner keeps the target and host architectures identical.
+    # If the label is unavailable on the fork, switch to macos-15.
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout xnulinux
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d /Applications/Xcode.app/Contents/Developer ]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcode-select -p
+          xcrun --sdk macosx --show-sdk-path
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Fetch clean XNU and apply x86_64 patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          XNU="$RUNNER_TEMP/xnu"
+          git init -q "$XNU"
+          git -C "$XNU" remote add origin https://github.com/apple-oss-distributions/xnu.git
+          git -C "$XNU" fetch -q --depth 1 origin \
+            refs/tags/xnu-12377.121.6:refs/tags/upstream
+          git -C "$XNU" checkout -q upstream
+          for p in "$GITHUB_WORKSPACE"/x86_64/patches/000*.patch; do
+            echo "apply $(basename "$p")"
+            git -C "$XNU" apply "$p"
+          done
+          echo "PATCHED_XNU=$XNU" >> "$GITHUB_ENV"
+          git -C "$XNU" diff --stat | tail -5
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          env \
+            TREE="$PATCHED_XNU" \
+            OBJROOT="$RUNNER_TEMP/xnu-hosted-obj" \
+            SYMROOT="$RUNNER_TEMP/xnu-hosted-sym" \
+            DSTROOT="$RUNNER_TEMP/xnu-hosted-dst" \
+            OUT="$RUNNER_TEMP/xnu-hosted.kernel" \
+            bash "$GITHUB_WORKSPACE/x86_64/scripts/build-xnu-on-macos.sh" \
+              "$RUNNER_TEMP/source-already-prepared.tar.gz"
+
+      - name: Inspect kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          file "$RUNNER_TEMP/xnu-hosted.kernel"
+          ls -lh "$RUNNER_TEMP/xnu-hosted.kernel"
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xnu-hosted-kernel
+          path: ${{ runner.temp }}/xnu-hosted.kernel
+          if-no-files-found: error
+          retention-days: 14

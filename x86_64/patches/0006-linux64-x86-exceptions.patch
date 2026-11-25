@@ -1,0 +1,188 @@
+diff --git a/EXTERNAL_HEADERS/linux64/linux64_x86_64.h b/EXTERNAL_HEADERS/linux64/linux64_x86_64.h
+index c27d76f..b4a613d 100644
+--- a/EXTERNAL_HEADERS/linux64/linux64_x86_64.h
++++ b/EXTERNAL_HEADERS/linux64/linux64_x86_64.h
+@@ -119,6 +119,8 @@ void linux64_spin_relax(void);
+ /* x86_64-only machine-layer entry points. */
+ void linux64_cpu_entry(void *cpu_data) __attribute__((noreturn));
+ void linux64_kernel_fault(struct linux64_x86_fault *fault);
++void linux64_user_fault(struct linux64_x86_fault *fault);
++void linux64_user_enter(unsigned long rip);
+ void linux64_user_run(void *saved_state, unsigned long arg) __attribute__((noreturn));
+ void linux64_x86_timer(void);
+ void linux64_x86_ipi(void);
+diff --git a/bsd/dev/i386/systemcalls.c b/bsd/dev/i386/systemcalls.c
+index 357d9e3..bbf6b7f 100644
+--- a/bsd/dev/i386/systemcalls.c
++++ b/bsd/dev/i386/systemcalls.c
+@@ -56,6 +56,7 @@
+ #include <mach/i386/syscall_sw.h>
+ 
+ #include <machine/pal_routines.h>
++#include <linux64/linux64_x86_64.h>
+ 
+ #if CONFIG_MACF
+ #include <security/mac_framework.h>
+@@ -475,6 +476,8 @@ skip_syscall:
+ 	}
+ 
+ 	uthread_assert_zero_proc_refcount(uthread);
++	/* LINUX64: tell the host where this thread will resume in ring 3. */
++	linux64_user_enter((unsigned long)regs->isf.rip);
+ 	thread_exception_return();
+ 	/* NOTREACHED */
+ }
+diff --git a/osfmk/i386/linux64_x86.c b/osfmk/i386/linux64_x86.c
+index 15fb4d8..c6b177c 100644
+--- a/osfmk/i386/linux64_x86.c
++++ b/osfmk/i386/linux64_x86.c
+@@ -10,6 +10,7 @@
+ #include <linux64/linux64_x86_64.h>
+ #include <i386/cpu_data.h>
+ #include <i386/mp.h>
++#include <i386/mp_desc.h>
+ #include <i386/proc_reg.h>
+ #include <kern/debug.h>
+ #include <kern/printf.h>
+@@ -104,23 +105,57 @@ linux64_x86_timer(void)
+ 	rtclock_intr(FALSE);
+ }
+ 
++static void
++linux64_fault_report(struct linux64_x86_fault *fault, int from_user)
++{
++	if (!linux64_hook || fault == NULL) {
++		return;
++	}
++	linux64_count(from_user ? LINUX64_CTR_USER_EXC : LINUX64_CTR_BAD_VECTOR);
++	/*
++	 * linux64_hook is xnu_world_upcall_x86(): it rediscovers this CPU's world
++	 * from CPUID, switches to Linux's CR3/IDT/stack and calls xnu_hook_x86().
++	 * The host returns nonzero for an unhandled fault, which ends the run.
++	 */
++	linux64_call(LINUX64_CALL_FAULT, fault);
++}
++
+ void
+ linux64_kernel_fault(struct linux64_x86_fault *fault)
+ {
+-	linux64_call(LINUX64_CALL_FAULT, fault);
++	linux64_fault_report(fault, 0);
++}
++
++void
++linux64_user_fault(struct linux64_x86_fault *fault)
++{
++	linux64_fault_report(fault, 1);
++}
++
++void
++linux64_user_enter(unsigned long rip)
++{
++	if (linux64_hook) {
++		linux64_call2(LINUX64_CALL_USER_ENTER, rip, 0);
++	}
+ }
+ 
+ /*
+  * Where a secondary CPU starts (LINUX64_CALL_CPU_START), on that CPU's host
+- * thread and in its own world. linux64_hook's caller has already installed
+- * this CPU's GS base and kernel stack. TODO(stage 3): call i386_init_slave()
+- * once cpu_desc_load()/GS is wired to the per-CPU world.
++ * thread and in its own world. The host passes this CPU's cpu_data_t; loading
++ * its descriptors installs the GS base that XNU's AP startup code expects, and
++ * i386_init_slave() continues through secondary_cpu_main() like a real SMP boot.
+  */
+ void
+ linux64_cpu_entry(void *cpu_data_ptr)
+ {
+-	(void)cpu_data_ptr;
+-	panic("linux64_cpu_entry: secondary CPU startup not ported yet");
++	cpu_data_t *cdp = (cpu_data_t *)cpu_data_ptr;
++
++	if (cdp == NULL) {
++		panic("linux64_cpu_entry: no cpu_data_t");
++	}
++	cpu_desc_load(cdp);
++	i386_init_slave();		/* never returns */
+ }
+ 
+ /* TODO(stage 4): restore an x86_THREAD_STATE64 and enter ring 3. */
+diff --git a/osfmk/i386/trap.c b/osfmk/i386/trap.c
+index f0f332c..90d3f33 100644
+--- a/osfmk/i386/trap.c
++++ b/osfmk/i386/trap.c
+@@ -66,6 +66,7 @@
+ #include <types.h>
+ #include <i386/eflags.h>
+ #include <i386/trap_internal.h>
++#include <linux64/linux64_x86_64.h>
+ #include <i386/pmap.h>
+ #include <i386/fpu.h>
+ #include <i386/panic_notify.h>
+@@ -701,6 +702,25 @@ kernel_trap(
+ 
+ 	is_user = (vaddr < VM_MAX_USER_PAGE_ADDRESS);
+ 
++	/*
++	 * LINUX64 (xnulinux): report a kernel fault to the Linux host before XNU
++	 * panics. The host owns the page tables while XNU is parked, so it is the
++	 * only side that can decide whether this address can be repaired.
++	 */
++	if (linux64_hook && (type == T_PAGE_FAULT || type == T_GENERAL_PROTECTION ||
++	    type == T_INVALID_OPCODE || type == T_STACK_FAULT)) {
++		struct linux64_x86_fault lx = {
++		    .vector     = (uint64_t)type,
++		    .error_code = saved_state->isf.err,
++		    .cr2        = saved_state->cr2,
++		    .rip        = saved_state->isf.rip,
++		    .rsp        = saved_state->isf.rsp,
++		    .rflags     = saved_state->isf.rflags,
++		};
++
++		linux64_kernel_fault(&lx);
++	}
++
+ #if DEVELOPMENT || DEBUG
+ 	uint32_t traptrace_index = traptrace_start(type, kern_ip, mach_absolute_time(), saved_state->rbp);
+ #endif
+@@ -1109,6 +1129,19 @@ user_trap(
+ #if DEVELOPMENT || DEBUG
+ 		traptrace_index = traptrace_start(type, rip, mach_absolute_time(), regs->rbp);
+ #endif
++		if (linux64_hook && (type == T_PAGE_FAULT || type == T_GENERAL_PROTECTION ||
++		    type == T_INVALID_OPCODE || type == T_STACK_FAULT)) {
++			struct linux64_x86_fault lx = {
++			    .vector     = (uint64_t)type,
++			    .error_code = regs->isf.err,
++			    .cr2        = regs->cr2,
++			    .rip        = regs->isf.rip,
++			    .rsp        = regs->isf.rsp,
++			    .rflags     = regs->isf.rflags,
++			};
++
++			linux64_user_fault(&lx);
++		}
+ 	} else {
+ 		x86_saved_state32_t     *regs;
+ 
+@@ -1124,6 +1157,19 @@ user_trap(
+ #if DEVELOPMENT || DEBUG
+ 		traptrace_index = traptrace_start(type, rip, mach_absolute_time(), regs->ebp);
+ #endif
++		if (linux64_hook && (type == T_PAGE_FAULT || type == T_GENERAL_PROTECTION ||
++		    type == T_INVALID_OPCODE || type == T_STACK_FAULT)) {
++			struct linux64_x86_fault lx = {
++			    .vector     = (uint64_t)type,
++			    .error_code = regs->err,
++			    .cr2        = regs->cr2,
++			    .rip        = regs->eip,
++			    .rsp        = regs->uesp,
++			    .rflags     = regs->efl,
++			};
++
++			linux64_user_fault(&lx);
++		}
+ 	}
+ 
+ #if DEVELOPMENT || DEBUG

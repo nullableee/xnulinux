@@ -1,0 +1,41 @@
+# x86_64 patch series
+
+Target tree: `xnu-12377.121.6` (macOS 26.5). Base config: `config/MASTER.x86_64`.
+The ARM64 series in `../../xnu-patches/` is only a source of arch-neutral hunks.
+
+Apply in order to a pristine source tree:
+
+```sh
+for p in x86_64/patches/0*.patch; do git apply "$p"; done
+```
+
+All six patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
+(verified with a detached worktree at the baseline commit).
+
+| # | File | Contents | Status |
+|---|---|---|---|
+| 0001 | `0001-linux64-x86-machine-layer.patch` | Arch-neutral hooks, shared XNU-side headers, x86 machine layer (`i386_init`, `machine_routines`, `pmCPU`, console, PRNG), `linux64_x86.c` | applied OK |
+| 0002 | `0002-linux64-x86-host-devices.patch` | `linux64_host.c`, `memdev.c`, IOKit platform/NVRAM/BSD-init hooks | applied OK |
+| 0003 | `0003-linux64-x86-boot-without-iboot.patch` | APFS root/auth bypass, Preboot volume mount, AMFI/trust-cache/img4/userland launch hooks | applied OK |
+| 0004 | `0004-linux64-x86-userland.patch` | Arch-neutral userland fixes + `nosys` diagnostic ported to `bsd/dev/i386/systemcalls.c` | applied OK |
+| 0005 | `0005-linux64-x86-pv-locks.patch` | `CONFIG_PV_TICKET`, replace KVM `vmcall`/`hlt` with host kick and host yield | applied OK |
+| 0006 | `0006-linux64-x86-exceptions.patch` | `#PF/#GP/#UD/#SS` reporting from `kernel_trap`/`user_trap`, first-user-entry notification, SMP entry via `i386_init_slave()` | applied OK |
+
+## Still missing after this series
+
+- x86 `boot_args` synthesis in the host (EFI memory map, `kaddr/ksize`, `KC_hdrs_vaddr`, APFS keys) — C code exists, not wired to a loader yet.
+- Real interrupt/timer injection (currently virtual IF + host calls only).
+- Full ring-3 execution path (the notification exists; XNU's own `ret_to_user` still has to be exercised with real user mappings).
+- Host loader (`xnu_main_x86.c`): load the KC, find `_linux64_cpu_entry`/`_cpu_data_ptr`, allocate worlds and set `linux64_hook`.
+- macOS 26 Intel userland disk and kernel collection.
+
+## Rules
+
+- Every hosted path stays behind `if (linux64_hook)`; a native x86_64 kernel
+  must still build and boot.
+- No Linux headers in XNU-side code. Everything crosses through
+  `x86_64/fki-ko/fki.h` and the headers in `x86_64/include/`.
+- Arch-neutral hunks are text-identical to the ARM64 patches where possible;
+  `x86_64/include/linux64.h` is the compatibility shim that lets them compile.
+- `%r15` is reserved for the per-CPU world pointer until the GS-relative field
+  in `cpu_data_t` is implemented; `osfmk/x86_64/cswitch.s` must preserve it.

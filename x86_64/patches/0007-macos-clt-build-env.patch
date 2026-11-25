@@ -1,0 +1,58 @@
+diff --git a/bsd/sys/Makefile b/bsd/sys/Makefile
+index 9dbbd66..7e1466f 100644
+--- a/bsd/sys/Makefile
++++ b/bsd/sys/Makefile
+@@ -353,7 +353,13 @@ _symbol_aliasing.h: $(MAKE_SYMBOL_ALIASING)
+ 	$(_v)$(MAKE_SYMBOL_ALIASING) "$(SDKROOT)" "$@"
+ 
+ # generated headers needed early (used by iig during installhdrs of iokit/DriverKit)
+-SETUP_GEN_LIST = _posix_availability.h _symbol_aliasing.h
++# LINUX64: a stock Command Line Tools SDK has no DriverKit availability.pl, and
++# the kernel never consumes _symbol_aliasing.h (cdefs.h includes it only for
++# !KERNEL).  Keep it in INSTALL_* but do not require it during build_setup.
++SETUP_GEN_LIST = _posix_availability.h
++ifneq ($(wildcard $(SDKROOT)/usr/local/libexec/availability.pl),)
++SETUP_GEN_LIST += _symbol_aliasing.h
++endif
+ ifneq ($(filter 1,$(EXCLAVEKIT) $(EXCLAVECORE)),)
+ SETUP_GEN_LIST =
+ endif
+diff --git a/bsd/sys/make_symbol_aliasing.sh b/bsd/sys/make_symbol_aliasing.sh
+index 24fb244..9077ec8 100755
+--- a/bsd/sys/make_symbol_aliasing.sh
++++ b/bsd/sys/make_symbol_aliasing.sh
+@@ -36,9 +36,14 @@ OUTPUT="$2"
+ 
+ AVAILABILITY_PL="${SDKROOT}/${DRIVERKITROOT}/usr/local/libexec/availability.pl"
+ 
++if [ ! -x "${AVAILABILITY_PL}" ] && [ -x "${SDKROOT}/usr/local/libexec/availability.pl" ]; then
++    AVAILABILITY_PL="${SDKROOT}/usr/local/libexec/availability.pl"
++fi
++
+ if [ ! -x "${AVAILABILITY_PL}" ] ; then
+-    echo "Unable to locate ${AVAILABILITY_PL} (or not executable)" >&2
+-    exit 1
++    # The generated header is only used by non-kernel builds.  Emitting no
++    # aliases lets those builds fall back to the unconditional macro in cdefs.h.
++    AVAILABILITY_PL=""
+ fi
+ 	    
+ {
+@@ -76,7 +81,7 @@ cat <<EOF
+ 
+ EOF
+ 
+-for ver in $(${AVAILABILITY_PL} --ios) ; do
++for ver in ${AVAILABILITY_PL:+$(${AVAILABILITY_PL} --ios)} ; do
+     set -- $(echo "$ver" | tr '.' ' ')
+     ver_major=$1
+     ver_minor=$2
+@@ -94,7 +99,7 @@ for ver in $(${AVAILABILITY_PL} --ios) ; do
+     fi
+ done
+ 
+-for ver in $(${AVAILABILITY_PL} --macosx) ; do
++for ver in ${AVAILABILITY_PL:+$(${AVAILABILITY_PL} --macosx)} ; do
+     set -- $(echo "$ver" | tr '.' ' ')
+     ver_major=$1
+     ver_minor=$2

@@ -1,0 +1,1154 @@
+diff --git a/EXTERNAL_HEADERS/linux64/linux64.h b/EXTERNAL_HEADERS/linux64/linux64.h
+new file mode 100644
+index 0000000..f7e332e
+--- /dev/null
++++ b/EXTERNAL_HEADERS/linux64/linux64.h
+@@ -0,0 +1,15 @@
++/* SPDX-License-Identifier: APSL-2.0 */
++/*
++ * Compatibility include for arch-neutral xnulinux patch hunks.
++ *
++ * The original ARM64 series includes <linux64/linux64.h>. The x86_64 port
++ * keeps its own ABI header, so this shim lets the same arch-neutral hunks be
++ * applied to both trees without editing them.
++ */
++#ifndef _LINUX64_COMPAT_H_
++#define _LINUX64_COMPAT_H_
++
++#include <linux64/linux64_abi_x86_64.h>
++#include <linux64/linux64_x86_64.h>
++
++#endif /* _LINUX64_COMPAT_H_ */
+diff --git a/EXTERNAL_HEADERS/linux64/linux64_abi_x86_64.h b/EXTERNAL_HEADERS/linux64/linux64_abi_x86_64.h
+new file mode 100644
+index 0000000..ccc7ff6
+--- /dev/null
++++ b/EXTERNAL_HEADERS/linux64/linux64_abi_x86_64.h
+@@ -0,0 +1,125 @@
++// SPDX-License-Identifier: APSL-2.0
++/*
++ * Copyright (c) 2026 xnulinux contributors. All rights reserved.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
++ * This file contains Original Code and/or Modifications of Original Code as defined in and that are subject to the Apple
++ * Public Source License Version 2.0 (the 'License'). You may not use this file except in compliance with the License.
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
++ */
++/*
++ * The interface between hosted XNU on x86_64 and its Linux host (x86_64/xnu-ko).
++ *
++ * This is deliberately NOT xnu-patches/include/linux64_abi.h. The ARM64 ABI is
++ * keyed by MPIDR, carries PSTATE/ESR/FAR and PAC state, and is read through
++ * TPIDR/SCTLR. The x86_64 ABI is keyed by the local APIC ID, carries CR2/RIP/
++ * error-code fault frames, and is reached through a plain SysV function call.
++ * Call numbers that keep the same semantic meaning keep the same value so the
++ * arch-neutral patches can be shared textually; x86-only calls start at 850.
++ *
++ * Both sides share physical memory: the world page, boot_args, the kernel
++ * collection and all request buffers are mapped in both page tables.
++ * This header includes nothing and is copied into XNU's EXTERNAL_HEADERS.
++ */
++#ifndef _LINUX64_ABI_X86_64_H_
++#define _LINUX64_ABI_X86_64_H_
++
++#define LINUX64_X86_ABI_VERSION 1
++
++enum linux64_call {
++	LINUX64_CALL_KERNEL_TABLES  = 210,	/* a1 = XNU PML4 physical address; host installs shared kernel entries */
++	LINUX64_CALL_IDLE           = 810,	/* a1 = ns to next XNU timer, a2 = pending IPI word for this CPU */
++	LINUX64_CALL_PREEMPTED      = 811,	/* host interrupt pending: a1 = 1 from kernel, 0 from user */
++	LINUX64_CALL_WALLCLOCK      = 812,	/* a1 = u64[2] {seconds, nanoseconds} UTC */
++	LINUX64_CALL_NET_SEND       = 816,	/* a1 = struct linux64_buf_req: one Ethernet frame */
++	LINUX64_CALL_NET_RECV       = 817,	/* a1 = struct linux64_buf_req: one Ethernet frame, result 0 if none */
++	LINUX64_CALL_INPUT_READ     = 818,	/* a1 = struct linux64_buf_req: evdev records */
++	LINUX64_CALL_KEYSTORE_RW    = 819,	/* a1 = struct linux64_rw_req */
++	LINUX64_CALL_DISK_RW        = 820,	/* a1 = struct linux64_rw_req */
++	LINUX64_CALL_DISK_SIZE      = 821,	/* a1 = u64 *: system disk size in bytes */
++	LINUX64_CALL_RANDOM         = 822,	/* a1 = buffer, a2 = length */
++	LINUX64_CALL_HOSTCALL       = 830,	/* a1 = struct linux64_hostcall_req */
++	LINUX64_CALL_CPU_START      = 840,	/* a1 = APIC ID, a2 = cpu_data_t: host enters linux64_cpu_entry(a2) */
++	LINUX64_CALL_IPI            = 841,	/* a1 = target APIC ID: set its pending-IPI word and wake it */
++	LINUX64_CALL_CPU_HALT       = 842,	/* a1 = APIC ID: park a secondary CPU until CPU_START */
++	LINUX64_CALL_FAULT          = 843,	/* a1 = struct linux64_x86_fault: unhandled kernel fault, ends the run */
++	LINUX64_CALL_CONSOLE_READ   = 993,
++	LINUX64_CALL_RAMDISK_RW     = 994,
++	LINUX64_CALL_RAMDISK_SIZE   = 995,
++	LINUX64_CALL_CONSOLE_WRITE  = 996,
++	LINUX64_CALL_ASSERT         = 997,
++	LINUX64_CALL_KPRINTF        = 998,
++	LINUX64_CALL_PANIC          = 999,
++	LINUX64_CALL_USER_ENTER     = 9100,	/* a1 = first user RIP */
++};
++
++struct linux64_buf_req {
++	void *buf;
++	__UINT64_TYPE__ len;
++	__INT64_TYPE__ result;
++};
++
++struct linux64_rw_req {
++	__UINT64_TYPE__ write;
++	__UINT64_TYPE__ off;
++	__UINT64_TYPE__ len;
++	void *buf;
++	__INT64_TYPE__ result;
++};
++
++struct linux64_hostcall_req {
++	const void *req;
++	__UINT64_TYPE__ len;
++	void *reply;
++	__UINT64_TYPE__ max;
++	__INT64_TYPE__ result;
++};
++
++struct linux64_assert_info {
++	const char *file;
++	long line;
++	const char *expr;
++};
++
++struct linux64_input_event {
++	unsigned short type;
++	unsigned short code;
++	int value;
++};
++
++/* x86_64 kernel fault handed to the host (replaces ESR/FAR/SPSR on ARM64). */
++struct linux64_x86_fault {
++	__UINT64_TYPE__ vector;		/* 14 (#PF), 13 (#GP), 6 (#UD), 10 (#TS) */
++	__UINT64_TYPE__ error_code;
++	__UINT64_TYPE__ cr2;
++	__UINT64_TYPE__ rip;
++	__UINT64_TYPE__ rsp;
++	__UINT64_TYPE__ rflags;
++};
++
++/*
++ * Slots are indexed by the x2APIC ID (8 bits is enough for the first port).
++ * The host refuses CPUs whose APIC IDs collide in this table.
++ */
++#define LINUX64_X86_CPU_SLOTS 256
++#define LINUX64_X86_CPU_SLOT(apic_id) ((unsigned)(apic_id) & 0xffu)
++#define LINUX64_CPU_SLOTS LINUX64_X86_CPU_SLOTS
++
++enum linux64_counter {
++	LINUX64_CTR_IDLE_THREAD  = 0,
++	LINUX64_CTR_MACHINE_IDLE = 1,
++	LINUX64_CTR_CPU_IDLE     = 2,
++	LINUX64_CTR_HOST_IDLE    = 3,
++	LINUX64_CTR_SWITCHES     = 4,
++	LINUX64_CTR_LAST_CALL    = 6,
++	LINUX64_CTR_RTCLOCK      = 7,	/* host timer injections */
++	LINUX64_CTR_THREAD       = 9,
++	LINUX64_CTR_USER_EXC     = 10,	/* exceptions from ring 3 */
++	LINUX64_CTR_USER_VECTOR  = 11,
++	LINUX64_CTR_USER_RIP     = 12,
++	LINUX64_CTR_BAD_VECTOR   = 14,
++	LINUX64_CTR_DUMP_REQ     = 15,
++	LINUX64_NCOUNTERS        = 16,
++};
++
++#endif /* _LINUX64_ABI_X86_64_H_ */
+diff --git a/EXTERNAL_HEADERS/linux64/linux64_x86_64.h b/EXTERNAL_HEADERS/linux64/linux64_x86_64.h
+new file mode 100644
+index 0000000..c27d76f
+--- /dev/null
++++ b/EXTERNAL_HEADERS/linux64/linux64_x86_64.h
+@@ -0,0 +1,130 @@
++// SPDX-License-Identifier: APSL-2.0
++/*
++ * Copyright (c) 2026 xnulinux contributors. All rights reserved.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
++ * This file contains Original Code and/or Modifications of Original Code as defined in and that are subject to the Apple
++ * Public Source License Version 2.0 (the 'License'). You may not use this file except in compliance with the License.
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
++ */
++/*
++ * XNU-side interface of the x86_64 LINUX64 machine layer.
++ *
++ * Copied with linux64_abi_x86_64.h into XNU's EXTERNAL_HEADERS/linux64. The
++ * names shared with the ARM64 layer (linux64_hook, linux64_vint, ...) are kept
++ * on purpose: the arch-neutral part of the patches can then be applied to both
++ * trees without renaming. All architecture state here is x86_64: APIC ID
++ * slots, a SysV `callq *hook` upcall, GS-based per-CPU data, CR2/RIP faults.
++ *
++ * Hosted or not is decided at run time: linux64_hook is 0 when this kernel
++ * boots on real hardware, and every hosted path is behind `if (linux64_hook)`.
++ */
++#ifndef _LINUX64_X86_64_H_
++#define _LINUX64_X86_64_H_
++
++#include <linux64/linux64_abi_x86_64.h>
++
++#ifndef LINUX64_DEBUG
++#define LINUX64_DEBUG 0
++#endif
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++extern unsigned long linux64_hook;
++extern unsigned long linux64_slide;
++
++/* APIC ID of this CPU. Implemented by the x86_64 machine-layer patch; before
++ * cpu_data_t exists it reads the local APIC ID register, afterwards it uses
++ * cpu_number()/cpu_data. */
++extern unsigned linux64_x86_apic_id(void);
++static inline unsigned
++linux64_cpu_slot(void)
++{
++	return LINUX64_X86_CPU_SLOT(linux64_x86_apic_id());
++}
++
++/* Virtual interrupt flag: real IF stays clear while XNU runs. */
++extern unsigned int linux64_vint[LINUX64_X86_CPU_SLOTS];
++#define LINUX64_VINT linux64_vint[linux64_cpu_slot()]
++extern unsigned int linux64_ipi_pending[LINUX64_X86_CPU_SLOTS];
++extern unsigned long linux64_dbg[LINUX64_NCOUNTERS];
++
++/*
++ * A plain indirect SysV call: rdi = call, rsi = a1, rdx = a2, rax = return.
++ * Not a function-pointer call from C: the hook is host text in a different
++ * page table/IDT world and must be entered with one explicit instruction.
++ */
++static inline unsigned long
++linux64_call2(enum linux64_call call, unsigned long a1, unsigned long a2)
++{
++	register unsigned long rdi __asm__("rdi") = (unsigned long)call;
++	register unsigned long rsi __asm__("rsi") = a1;
++	register unsigned long rdx __asm__("rdx") = a2;
++	register unsigned long hook __asm__("rax") = linux64_hook;
++
++	linux64_dbg[LINUX64_CTR_LAST_CALL] = (unsigned long)call;
++	if (linux64_hook) {
++		__asm__ volatile ("callq *%3"
++		    : "+r"(rdi), "+r"(rsi), "+r"(rdx), "+r"(hook)
++		    :
++		    : "rcx", "r8", "r9", "r10", "r11", "cc", "memory");
++	}
++	return rdi;
++}
++
++static inline unsigned long
++linux64_call(enum linux64_call call, const void *a1)
++{
++	return linux64_call2(call, (unsigned long)a1, 0);
++}
++
++static inline void
++linux64_random(void *buf, unsigned long len)
++{
++	linux64_call2(LINUX64_CALL_RANDOM, (unsigned long)buf, len);
++}
++
++static inline __UINT64_TYPE__
++linux64_random_uniform(__UINT64_TYPE__ bound)
++{
++	__UINT64_TYPE__ v, limit;
++
++	if (bound == 0) {
++		return 0;
++	}
++	limit = -bound % bound;
++	do {
++		linux64_random(&v, sizeof(v));
++	} while (v < limit);
++	return v % bound;
++}
++
++static inline void
++linux64_count(enum linux64_counter c)
++{
++	linux64_dbg[c]++;
++}
++
++/* Shared with the ARM64 patches (arch-neutral call sites). */
++void linux64_assert_report(const char *file, int line, const char *expr);
++void linux64_ipi_take(void);
++void linux64_cpu_signal(unsigned int cpu);
++void linux64_trust_cache_late_init(void);
++int linux64_amfi_off(void);
++void linux64_dump_threads(void);
++void linux64_spin_relax(void);
++
++/* x86_64-only machine-layer entry points. */
++void linux64_cpu_entry(void *cpu_data) __attribute__((noreturn));
++void linux64_kernel_fault(struct linux64_x86_fault *fault);
++void linux64_user_run(void *saved_state, unsigned long arg) __attribute__((noreturn));
++void linux64_x86_timer(void);
++void linux64_x86_ipi(void);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _LINUX64_X86_64_H_ */
+diff --git a/libkern/crypto/corecrypto_rand.c b/libkern/crypto/corecrypto_rand.c
+index d46815b..acea296 100644
+--- a/libkern/crypto/corecrypto_rand.c
++++ b/libkern/crypto/corecrypto_rand.c
+@@ -27,9 +27,19 @@
+  */
+ 
+ #include <libkern/crypto/crypto_internal.h>
++#include <linux64/linux64.h>
+ #include <corecrypto/ccrng.h>
++#include <string.h>
+ #include <libkern/crypto/rand.h>
+ 
++/*
++ * LINUX64 (xnulinux): until the corecrypto kext registers g_crypto_funcs (and on a hosted kernel without it), random
++ * bytes come from the host's generator (Linux's get_random_bytes, LINUX64_CALL_RANDOM). A context made before then
++ * holds nothing (linux64_rng_ctx_size).
++ */
++#define linux64_rng_fallback()  (g_crypto_funcs == NULL && linux64_hook != 0)
++#define linux64_rng_ctx_size    (2 * sizeof(uint64_t))
++
+ int
+ cc_rand_generate(void *out, size_t outlen)
+ {
+@@ -41,6 +51,9 @@ cc_rand_generate(void *out, size_t outlen)
+ 		if (rng_state != NULL) {
+ 			error = ccrng_generate(rng_state, outlen, out);
+ 		}
++	} else if (linux64_rng_fallback()) {
++		linux64_random(out, outlen);
++		error = 0;
+ 	}
+ 
+ 	return error;
+@@ -58,6 +71,10 @@ crypto_random_generate(
+ 	void *random,
+ 	size_t random_size)
+ {
++	if (linux64_rng_fallback()) {
++		linux64_random(random, random_size);
++		return;
++	}
+ 	g_crypto_funcs->random_generate_fn(ctx, random, random_size);
+ }
+ 
+@@ -67,12 +84,19 @@ crypto_random_uniform(
+ 	uint64_t bound,
+ 	uint64_t *random)
+ {
++	if (linux64_rng_fallback()) {
++		*random = linux64_random_uniform(bound);
++		return;
++	}
+ 	g_crypto_funcs->random_uniform_fn(ctx, bound, random);
+ }
+ 
+ size_t
+ crypto_random_kmem_ctx_size(void)
+ {
++	if (linux64_rng_fallback()) {
++		return linux64_rng_ctx_size;
++	}
+ 	return g_crypto_funcs->random_kmem_ctx_size_fn();
+ }
+ 
+@@ -80,5 +104,9 @@ void
+ crypto_random_kmem_init(
+ 	crypto_random_ctx_t ctx)
+ {
++	if (linux64_rng_fallback()) {
++		memset(ctx, 0, linux64_rng_ctx_size);
++		return;
++	}
+ 	g_crypto_funcs->random_kmem_init_fn(ctx);
+ }
+diff --git a/osfmk/conf/files.x86_64 b/osfmk/conf/files.x86_64
+index c95fc52..0562ddc 100644
+--- a/osfmk/conf/files.x86_64
++++ b/osfmk/conf/files.x86_64
+@@ -46,6 +46,7 @@ osfmk/i386/ldt.c		standard
+ osfmk/x86_64/loose_ends.c	standard
+ osfmk/x86_64/copyio.c		standard
+ osfmk/i386/lock_ticket_pv.c	optional config_pv_ticket
++osfmk/i386/linux64_x86.c	standard
+ osfmk/i386/locks_i386.c		standard
+ osfmk/i386/locks_i386_opt.c	standard
+ osfmk/x86_64/locore.s	standard
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index 7784e72..36fdd35 100644
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -26,6 +26,7 @@
+  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+  */
+ 
++#include <linux64/linux64.h>
+ #ifdef __x86_64__
+ #include <i386/mp.h>
+ #include <i386/cpu_data.h>
+@@ -523,6 +524,11 @@ console_resume()
+ void
+ console_write(char *str, int size)
+ {
++	/* LINUX64 (xnulinux): hosted console output goes to the host (stage 996). */
++	if (linux64_hook && str != NULL && size > 0) {
++		linux64_call2(LINUX64_CALL_CONSOLE_WRITE, (unsigned long)str, (unsigned long)size);
++		return;
++	}
+ 	if (disableConsoleOutput) {
+ 		return;
+ 	}
+diff --git a/osfmk/console/serial_general.c b/osfmk/console/serial_general.c
+index b1ca47a..d878442 100644
+--- a/osfmk/console/serial_general.c
++++ b/osfmk/console/serial_general.c
+@@ -33,6 +33,7 @@
+  */
+ 
+ #include <kern/spl.h>
++#include <linux64/linux64.h>
+ #include <mach/std_types.h>
+ #include <types.h>
+ #include <kern/thread.h>
+@@ -48,13 +49,32 @@ SECURITY_READ_ONLY_LATE(unsigned int) serialmode;
+  *  characters that have been typed.
+  */
+ 
++/*
++ * LINUX64 (xnulinux): a hosted XNU's console input comes from the host (LINUX64_CALL_CONSOLE_READ), polled by the serial keyboard thread like a UART.
++ */
++static int
++linux64_cons_getc(void)
++{
++	static char buf[64];
++	static int n, i;
++
++	if (i < n) {
++		return (unsigned char)buf[i++];
++	}
++	struct linux64_buf_req q = { .buf = buf, .len = sizeof(buf), .result = 0 };
++	linux64_call(LINUX64_CALL_CONSOLE_READ, &q);
++	n = q.result > 0 ? (int)q.result : 0;
++	i = 0;
++	return n ? (unsigned char)buf[i++] : -1;
++}
++
+ void
+ serial_keyboard_init(void)
+ {
+ 	kern_return_t   result;
+ 	thread_t                thread;
+ 
+-	if (!(serialmode & SERIALMODE_INPUT)) { /* Leave if we do not want a serial console */
++	if (!(serialmode & SERIALMODE_INPUT) && !linux64_hook) { /* Leave if we do not want a serial console */
+ 		return;
+ 	}
+ 
+@@ -82,7 +102,7 @@ serial_keyboard_poll(void)
+ 	uint64_t next;
+ 
+ 	while (1) {
+-		chr = _serial_getc(false); /* Get a character if there is one */
++		chr = linux64_hook ? linux64_cons_getc() : _serial_getc(false); /* Get a character if there is one */
+ 		if (chr < 0) { /* The serial buffer is empty */
+ 			break;
+ 		}
+diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
+index d66e3f8..fd86bec 100644
+--- a/osfmk/i386/i386_init.c
++++ b/osfmk/i386/i386_init.c
+@@ -55,6 +55,7 @@
+  */
+ 
+ 
++#include <linux64/linux64_x86_64.h>
+ #include <mach/i386/vm_param.h>
+ 
+ #include <string.h>
+@@ -647,6 +648,14 @@ i386_slide_and_rebase_image(uintptr_t kstart_addr)
+ 	seg = (kernel_segment_command_t *)((uintptr_t)k_mh + sizeof(*k_mh));
+ 	assert(seg->cmd == LC_SEGMENT_KERNEL);
+ 	slide = (uintptr_t)k_mh - seg->vmaddr;
++	/*
++	 * LINUX64 (xnulinux): xnu.ko already loaded and rebased the kernel
++	 * collection at the slide chosen by the host. Do not infer a second one
++	 * from the (already slid) Mach header.
++	 */
++	if (linux64_hook) {
++		slide = linux64_slide;
++	}
+ 	DBG("[MH] Sliding new-style KC: %llu\n", (unsigned long long)slide);
+ 
+ 	/*
+@@ -772,6 +781,17 @@ vstart(vm_offset_t boot_args_start)
+ 		Idle_PTs_init();
+ 		postcode(VSTART_IDLE_PTS_INIT);
+ 
++		/*
++		 * LINUX64: ask the host to install the shared kernel PML4 entries
++		 * (host call gate, console and device windows) into our page table.
++		 * The ID map is still active here, so this is the host's own CR3
++		 * we are handing over: fki_x86_enter() will switch to IdlePML4.
++		 */
++		if (linux64_hook) {
++			linux64_call2(LINUX64_CALL_KERNEL_TABLES,
++			    (unsigned long)ID_MAP_VTOP(IdlePML4), 0);
++		}
++
+ #if KASAN
+ 		/* Init kasan and map whatever was stolen from physfree */
+ 		kasan_init();
+diff --git a/osfmk/i386/linux64_x86.c b/osfmk/i386/linux64_x86.c
+new file mode 100644
+index 0000000..15fb4d8
+--- /dev/null
++++ b/osfmk/i386/linux64_x86.c
+@@ -0,0 +1,134 @@
++/*
++ * LINUX64 (xnulinux), x86_64 machine layer: the XNU side of the hosted state.
++ *
++ * The ARM64 layer keeps its globals in osfmk/arm/arm_init.c and reads CPU
++ * identity from MPIDR. Here the same state is keyed by the x2APIC/APIC ID and
++ * the only architecture-specific exception frame is struct linux64_x86_fault.
++ * Everything the arch-neutral patches call lives here so no other x86 file
++ * needs to know about the host ABI.
++ */
++#include <linux64/linux64_x86_64.h>
++#include <i386/cpu_data.h>
++#include <i386/mp.h>
++#include <i386/proc_reg.h>
++#include <kern/debug.h>
++#include <kern/printf.h>
++#include <pexpert/pexpert.h>
++
++/* Set by xnu.ko before vstart()/i386_init(). */
++unsigned long linux64_hook;
++unsigned long linux64_slide;
++unsigned int linux64_vint[LINUX64_X86_CPU_SLOTS];
++unsigned int linux64_ipi_pending[LINUX64_X86_CPU_SLOTS];
++unsigned long linux64_dbg[LINUX64_NCOUNTERS];
++
++/*
++ * CPUID leaf 1 returns the initial APIC ID in EBX[31:24]. It is available on
++ * every x86_64 CPU and, unlike the local APIC MMIO/x2APIC MSRs, needs no
++ * firmware or EFLAGS state: usable in the first instructions after vstart().
++ */
++unsigned
++linux64_x86_apic_id(void)
++{
++	unsigned int eax, ebx;
++
++	__asm__ volatile ("cpuid"
++	    : "=a" (eax), "=b" (ebx)
++	    : "a" (1), "c" (0));
++	(void)eax;
++	return ebx >> 24;
++}
++
++void
++linux64_assert_report(const char *file, int line, const char *expr)
++{
++	struct linux64_assert_info a = { file, line, expr };
++
++	linux64_call(LINUX64_CALL_ASSERT, &a);
++}
++
++/* In a spin-wait: let the host take this CPU (Linux still owns IRQs). */
++void
++linux64_spin_relax(void)
++{
++	linux64_call2(LINUX64_CALL_PREEMPTED, 1, 0);
++}
++
++int
++linux64_amfi_off(void)
++{
++	static int off = -1;
++
++	if (off < 0) {
++		int v = 0;
++
++		off = PE_parse_boot_argn("amfi_get_out_of_my_way", &v, sizeof(v)) && v != 0;
++	}
++	return off;
++}
++
++/* A CPU this kernel wants to interrupt: the host sets its pending-IPI word. */
++void
++linux64_cpu_signal(unsigned int cpu)
++{
++	linux64_call2(LINUX64_CALL_IPI, (unsigned long)cpu, 0);
++}
++
++/* Called by the machine layer where XNU re-enables interrupts. */
++void
++linux64_ipi_take(void)
++{
++	unsigned int slot = linux64_cpu_slot();
++
++	if (__sync_fetch_and_and(&linux64_ipi_pending[slot], 0)) {
++		/* XNU's IPI handler uses no saved-state pointer on the polling path. */
++		cpu_signal_handler(NULL);
++	}
++}
++
++/* Called by the x86 IRQ glue when the host delivered a device interrupt. */
++void
++linux64_x86_ipi(void)
++{
++	linux64_count(LINUX64_CTR_IPI);
++	linux64_ipi_take();
++}
++
++/* Host timer injection: same path as rtclock's LAPIC timer interrupt. */
++void
++linux64_x86_timer(void)
++{
++	extern void rtclock_intr(unsigned int);
++
++	linux64_count(LINUX64_CTR_RTCLOCK);
++	rtclock_intr(FALSE);
++}
++
++void
++linux64_kernel_fault(struct linux64_x86_fault *fault)
++{
++	linux64_call(LINUX64_CALL_FAULT, fault);
++}
++
++/*
++ * Where a secondary CPU starts (LINUX64_CALL_CPU_START), on that CPU's host
++ * thread and in its own world. linux64_hook's caller has already installed
++ * this CPU's GS base and kernel stack. TODO(stage 3): call i386_init_slave()
++ * once cpu_desc_load()/GS is wired to the per-CPU world.
++ */
++void
++linux64_cpu_entry(void *cpu_data_ptr)
++{
++	(void)cpu_data_ptr;
++	panic("linux64_cpu_entry: secondary CPU startup not ported yet");
++}
++
++/* TODO(stage 4): restore an x86_THREAD_STATE64 and enter ring 3. */
++void
++linux64_user_run(void *saved_state, unsigned long arg)
++{
++	(void)saved_state;
++	(void)arg;
++	linux64_call2(LINUX64_CALL_USER_ENTER, 0, 0);
++	panic("linux64_user_run: user entry not ported yet");
++}
+diff --git a/osfmk/i386/machine_routines.c b/osfmk/i386/machine_routines.c
+index d7e433d..f01c0c0 100644
+--- a/osfmk/i386/machine_routines.c
++++ b/osfmk/i386/machine_routines.c
+@@ -35,6 +35,7 @@
+ 
+ #include <kern/cpu_number.h>
+ #include <kern/thread.h>
++#include <kern/ast.h>
+ #include <kern/thread_call.h>
+ #include <kern/policy_internal.h>
+ 
+@@ -53,6 +54,7 @@
+ #include <i386/pmap.h>
+ #include <i386/pmap_internal.h>
+ #include <i386/misc_protos.h>
++#include <linux64/linux64_x86_64.h>
+ #include <kern/timer_queue.h>
+ #include <vm/vm_map_xnu.h>
+ #include <architecture/i386/pio.h>
+@@ -385,6 +387,47 @@ ml_set_interrupts_enabled(boolean_t enable)
+ 
+ 	istate = ((flags & EFL_IF) != 0);
+ 
++	/*
++	 * LINUX64 (xnulinux): Linux owns the real IDT and interrupt flag. XNU's
++	 * stacks cannot take Linux interrupts, so keep IF clear and track XNU's
++	 * view in linux64_vint. When XNU re-enables interrupts, let Linux run
++	 * and deliver a due timer or a pending IPI, as the LAPIC would.
++	 */
++	if (linux64_hook) {
++		unsigned int slot = linux64_cpu_slot();
++		boolean_t was = linux64_vint[slot] ? TRUE : FALSE;
++
++		if (enable && !was) {
++			thread_t thread = current_thread();
++			cpu_data_t *cdp = current_cpu_datap();
++			static uint64_t linux64_last_kyield[LINUX64_X86_CPU_SLOTS];
++
++			if (cdp->cpu_int_state == NULL) {
++				uint64_t now = mach_absolute_time();
++				if (now - linux64_last_kyield[slot] > 48000) {
++					linux64_last_kyield[slot] = now;
++					if (get_preemption_level() == 0) {
++						linux64_call2(LINUX64_CALL_PREEMPTED, 1, 0);
++					}
++					if (cdp->lcpu.rtcPop != 0 && cdp->lcpu.rtcPop != UINT64_MAX &&
++					    mach_absolute_time() >= cdp->lcpu.rtcPop) {
++						linux64_x86_timer();
++					}
++				}
++				linux64_ipi_take();
++			}
++			if (get_preemption_level() == 0) {
++				while (current_cpu_datap()->cpu_pending_ast & AST_URGENT) {
++					ast_taken_kernel();
++				}
++			}
++			linux64_vint[linux64_cpu_slot()] = 1;
++		} else if (!enable) {
++			linux64_vint[slot] = 0;
++		}
++		return was;
++	}
++
+ 	if (enable) {
+ 		__asm__ volatile ("sti;nop");
+ 
+@@ -856,6 +899,10 @@ unsigned int
+ ml_wait_max_cpus(void)
+ {
+ 	lck_mtx_lock(&max_cpus_lock);
++	/* LINUX64: no CPU kext sets this; the host published the CPUs at boot. */
++	if (linux64_hook) {
++		max_cpus_initialized = MAX_CPUS_SET;
++	}
+ 	while (max_cpus_initialized != MAX_CPUS_SET) {
+ 		max_cpus_initialized = MAX_CPUS_WAIT;
+ 		lck_mtx_sleep(&max_cpus_lock, LCK_SLEEP_DEFAULT, &max_cpus_initialized, THREAD_UNINT);
+diff --git a/osfmk/i386/pmCPU.c b/osfmk/i386/pmCPU.c
+index bb1900a..3098ded 100644
+--- a/osfmk/i386/pmCPU.c
++++ b/osfmk/i386/pmCPU.c
+@@ -39,6 +39,7 @@
+ #include <i386/pmap.h>
+ #include <i386/misc_protos.h>
+ #include <kern/machine.h>
++#include <kern/clock.h>
+ #include <kern/pms.h>
+ #include <kern/processor.h>
+ #include <kern/timer_queue.h>
+@@ -53,6 +54,7 @@
+ #include <i386/tsc.h>
+ 
+ #include <kern/sched_urgency.h>
++#include <linux64/linux64_x86_64.h>
+ 
+ #define DELAY_UNSET             0xFFFFFFFFFFFFFFFFULL
+ 
+@@ -112,6 +114,35 @@ machine_idle(void)
+ 	uint64_t esdeadline, ehdeadline;
+ 	boolean_t do_process_pending_timers = FALSE;
+ 
++	/*
++	 * LINUX64 (xnulinux): hosted, the CPU kext never loads and no LAPIC timer
++	 * runs. Yield to the host until XNU's next deadline (or 1 ms), then feed
++	 * back the due timer and any IPI as if the LAPIC had interrupted us.
++	 */
++	if (linux64_hook) {
++		uint64_t deadline = my_cpu->lcpu.rtcPop;
++		uint64_t ns = NSEC_PER_MSEC;
++
++		linux64_count(LINUX64_CTR_MACHINE_IDLE);
++		ctime = mach_absolute_time();
++		if (deadline != 0 && deadline != UINT64_MAX) {
++			if (deadline <= ctime) {
++				ns = 0;
++			} else {
++				absolutetime_to_nanoseconds(deadline - ctime, &ns);
++			}
++		}
++		linux64_call2(LINUX64_CALL_IDLE, ns,
++		    (unsigned long)&linux64_ipi_pending[linux64_cpu_slot()]);
++		if (my_cpu->lcpu.rtcPop != 0 && my_cpu->lcpu.rtcPop != UINT64_MAX &&
++		    mach_absolute_time() >= my_cpu->lcpu.rtcPop) {
++			linux64_x86_timer();
++		}
++		linux64_ipi_take();
++		linux64_vint[linux64_cpu_slot()] = 1;
++		return;
++	}
++
+ 	ctime = mach_absolute_time();
+ 	esdeadline = my_cpu->rtclock_timer.queue.earliest_soft_deadline;
+ 	ehdeadline = my_cpu->rtclock_timer.deadline;
+diff --git a/osfmk/kern/assert.h b/osfmk/kern/assert.h
+index 4224c9d..4a1fe94 100644
+--- a/osfmk/kern/assert.h
++++ b/osfmk/kern/assert.h
+@@ -193,9 +193,28 @@ STATIC_IF_KEY_DECLARE_TRUE(mach_assert);
+ #define mach_assert_enabled_expr(ex) \
+ 	(mach_assert_enabled() || __builtin_constant_p(!(ex)))
+ 
++#if defined(XNU_KERNEL_PRIVATE) && defined(__arm64__)
++/*
++ * LINUX64 (xnulinux): hosted inside Linux there is no XNU exception vector for the assert brk, so a
++ * failed assert() is reported to the host, which decides whether XNU continues or the run ends.
++ */
++#ifdef __cplusplus
++extern "C" {
++#endif
++extern unsigned long linux64_hook;
++extern void linux64_assert_report(const char *file, int line, const char *expr);
++#ifdef __cplusplus
++}
++#endif
++#define assert(ex) \
++	(mach_assert_enabled_expr(ex) && !(ex) \
++	? (linux64_hook ? linux64_assert_report(__FILE_NAME__, __LINE__, #ex) \
++	: (void)mach_assert_abort(#ex)) : (void)0)
++#else
+ #define assert(ex) \
+ 	(mach_assert_enabled_expr(ex) && !(ex) \
+ 	? (void)mach_assert_abort(#ex) : (void)0)
++#endif
+ 
+ #define assertf(ex, fmt, args...)  ({ \
+ 	if (mach_assert_enabled_expr(ex) && __builtin_expect(!(ex), 0L)) {      \
+diff --git a/osfmk/kern/backtrace.c b/osfmk/kern/backtrace.c
+index 77044be..2c195af 100644
+--- a/osfmk/kern/backtrace.c
++++ b/osfmk/kern/backtrace.c
+@@ -48,7 +48,7 @@
+ #include <arm64/mte.h>
+ #endif // HAS_MTE
+ 
+-#if __x86_64__
++#if __x86_64__ || __arm64__	/* LINUX64: hosted, a kernel stack also has frames in Linux's text, beyond 32 bits of stext */
+ static void
+ _backtrace_packed_out_of_reach(void)
+ {
+@@ -58,7 +58,7 @@ _backtrace_packed_out_of_reach(void)
+ 	//
+ 	// This is an Intel only issue.
+ }
+-#endif // __x86_64__
++#endif // __x86_64__ || __arm64__
+ 
+ // Pack an address according to a particular packing format.
+ static size_t
+@@ -74,7 +74,7 @@ _backtrace_pack_addr(backtrace_pack_t packing, uint8_t *dst, size_t dst_size,
+ 	case BTP_KERN_OFFSET_32:;
+ 		uintptr_t addr_delta = addr - vm_kernel_stext;
+ 		int32_t addr_packed = (int32_t)addr_delta;
+-#if __x86_64__
++#if __x86_64__ || __arm64__
+ 		if ((uintptr_t)(int32_t)addr_delta != addr_delta) {
+ 			addr = (vm_offset_t)&_backtrace_packed_out_of_reach;
+ 			addr_delta = addr - vm_kernel_stext;
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index 48f9405..584e416 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -55,6 +55,7 @@
+  */
+ 
+ #include <mach_assert.h>
++#include <linux64/linux64.h>
+ #include <mach_kdp.h>
+ #include <kdp/kdp.h>
+ #include <kdp/kdp_core.h>
+@@ -754,7 +755,20 @@ DebuggerTrapWithState(debugger_op db_op, const char *db_message, const char *db_
+ 	 * The rest of the cores are halted by IPI if possible; if that
+ 	 * fails it will fall back to dbgwrap.
+ 	 */
++	{
++		/*
++		 * LINUX64 (xnulinux): the hosted kernel's exceptions are taken by Linux, which does not hand XNU this trap
++		 * (an uncategorized exception), so a stackshot (spindump, tailspin, sysdiagnose) ended the whole run. The
++		 * stackshot needs no trap frame (handle_debugger_trap takes it with do_stackshot(NULL)) and there is one CPU:
++		 * call the handler here, as the trap would (kdp_trap -> handle_debugger_trap).
++		 */
++		if (linux64_hook && db_op == DBOP_STACKSHOT) {
++			handle_debugger_trap(0, 0, 0, NULL);	/* the exception number only matters for breakpoints */
++			goto trapped;
++		}
++	}
+ 	TRAP_DEBUGGER;
++trapped:
+ 
+ 	ret = CPUDEBUGGERRET;
+ 
+@@ -1253,6 +1267,26 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ {
+ #pragma clang diagnostic pop
+ 
++#if defined(__arm64__)
++	{
++		/* LINUX64 (xnulinux): report the panic to the host (see arm_init.c). */
++		if (linux64_hook) {
++			/* the formatted message when there are arguments (the format string alone otherwise) */
++			static char linux64_panic_buf[512];
++			const char *msg = panic_format_str;
++			if (panic_args != NULL && panic_format_str != NULL) {
++				extern int vsnprintf(char *, size_t, const char *, va_list);
++				va_list ap;
++				va_copy(ap, *panic_args);
++				vsnprintf(linux64_panic_buf, sizeof(linux64_panic_buf), panic_format_str, ap);
++				va_end(ap);
++				msg = linux64_panic_buf;
++			}
++			linux64_call2(LINUX64_CALL_PANIC, (unsigned long)msg, panic_caller);
++		}
++	}
++#endif
++
+ #if defined(__x86_64__) && (DEVELOPMENT || DEBUG)
+ 	read_lbr();
+ #endif
+diff --git a/osfmk/kern/kext_alloc.c b/osfmk/kern/kext_alloc.c
+index 119c6c7..f3e43a6 100644
+--- a/osfmk/kern/kext_alloc.c
++++ b/osfmk/kern/kext_alloc.c
+@@ -26,6 +26,7 @@
+  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+  */
+ #include <kern/assert.h>
++#include <linux64/linux64.h>
+ #include <kern/debug.h>
+ #include <kern/kext_alloc.h>
+ #include <kern/misc_protos.h>
+@@ -218,6 +219,18 @@ check_reachable:
+ 	}
+ #endif
+ 
++	{
++		/*
++		 * LINUX64 (xnulinux): hosted XNU has no page-fault path of its own yet (Linux takes the abort), so kext
++		 * memory is wired up front instead of faulted in on first touch.
++		 */
++		if (linux64_hook) {
++			kern_return_t wr = vm_map_wire_kernel(g_kext_map, addr, addr + size, VM_PROT_DEFAULT, VM_KERN_MEMORY_KEXT, FALSE);
++			if (wr != KERN_SUCCESS) {
++				printf("linux64: kext_alloc wire failed %d\n", wr);
++			}
++		}
++	}
+ 	/* Check that the memory is reachable by kernel text */
+ 	if ((addr + size) > kext_alloc_max) {
+ 		kext_free((vm_offset_t)addr, size);
+diff --git a/osfmk/kern/printf.c b/osfmk/kern/printf.c
+index 2fc6931..d581670 100644
+--- a/osfmk/kern/printf.c
++++ b/osfmk/kern/printf.c
+@@ -155,6 +155,7 @@
+  */
+ 
+ #include <debug.h>
++#include <linux64/linux64.h>
+ #include <mach_kdp.h>
+ #include <mach/boolean.h>
+ #include <kern/cpu_number.h>
+@@ -876,6 +877,20 @@ __printflike(1, 0)
+ static int
+ vprintf_internal(const char *fmt, va_list ap_in, void *caller)
+ {
++	{
++		/* LINUX64 (xnulinux): hosted XNU prints through the host (dmesg), like kprintf. */
++		if (linux64_hook && fmt) {
++			extern int vsnprintf(char *, size_t, const char *, va_list);
++			char buf[256];
++			va_list ap;
++			va_copy(ap, ap_in);
++			vsnprintf(buf, sizeof(buf), fmt, ap);
++			va_end(ap);
++			linux64_call(LINUX64_CALL_KPRINTF, buf);
++			(void)caller;
++			return 0;
++		}
++	}
+ 	if (fmt) {
+ 		struct console_printbuf_state info_data;
+ 
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+index b2aae03..af01ff3 100644
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -65,6 +65,7 @@
+  */
+ 
+ #include <kern/sched_prim.h>
++#include <linux64/linux64.h>
+ 
+ #if !SCHED_TEST_HARNESS
+ 
+@@ -3010,6 +3011,7 @@ thread_invoke(
+ 
+ 	thread_continue_t       continuation = self->continuation;
+ 	void                    *parameter   = self->parameter;
++	linux64_count(LINUX64_CTR_SWITCHES); linux64_dbg[LINUX64_CTR_THREAD] = (unsigned long)thread;	/* LINUX64: for the host's monitor */
+ 
+ 	struct recount_snap snap = { 0 };
+ 	recount_snapshot(&snap);
+@@ -6452,6 +6454,7 @@ processor_idle(
+ 	recount_processor_idle(&processor->pr_recount, &snap);
+ 
+ 	while (1) {
++		linux64_count(LINUX64_CTR_IDLE_THREAD);	/* LINUX64: for the host's monitor */
+ 		/*
+ 		 * Ensure that updates to my processor and pset state,
+ 		 * made by the IPI source processor before sending the IPI,
+@@ -9984,3 +9987,45 @@ sysctl_clutch_thread_group_cpu_time_for_thread(__unused thread_t thread,
+ #endif /* !SCHED_TEST_HARNESS */
+ 
+ #endif /* DEVELOPMENT || DEBUG */
++
++/*
++ * LINUX64 (xnulinux) diagnostics: print every thread's state, wait event, continuation and a few saved frames, when the
++ * host asks (LINUX64_CTR_DUMP_REQ). Called from the hosted idle path with interrupts off; the list is walked without its
++ * lock (another CPU may change it meanwhile: a diagnostic, not a consistent snapshot).
++ */
++void
++linux64_dump_threads(void)
++{
++	thread_t t;
++	int n = 0;
++	extern int proc_pid(struct proc *);
++	queue_iterate(&threads, t, thread_t, threads) {
++		if (++n > 400) {
++			break;
++		}
++		void *bp = get_bsdthreadtask_info(t);
++		if (bp == NULL || proc_pid((struct proc *)bp) == 0) {
++			/* the kernel's own threads: only those blocked with a saved stack (not parked on a continuation) */
++			if (t->continuation != NULL || t->kernel_stack == 0) {
++				continue;
++			}
++			kprintf("linux64 proc 0 kernel_task\n");
++		} else {
++			kprintf("linux64 proc %d %s\n", proc_pid((struct proc *)bp), proc_name_address((struct proc *)bp));
++		}
++		struct arm_kernel_saved_state *ss = (struct arm_kernel_saved_state *)(void *)t->machine.kstackptr;
++		uint64_t lr = 0, fp = 0;
++		if (ss != NULL && t->kernel_stack != 0) {
++			lr = ss->lr | 0xffffff8000000000ULL;
++			fp = ss->fp;
++		}
++		kprintf("linux64 thread %p tid %llu state 0x%x pri %d wait %p cont %p lr 0x%llx\n",
++		    t, t->thread_id, t->state, t->sched_pri, (void *)t->wait_event, (void *)t->continuation, lr);
++		for (int f = 0; f < 14 && fp != 0 && t->kernel_stack != 0 &&
++		    fp >= t->kernel_stack && fp < t->kernel_stack + kernel_stack_size; f++) {
++			uint64_t *frame = (uint64_t *)fp;
++			kprintf("linux64     frame 0x%llx\n", frame[1] | 0xffffff8000000000ULL);
++			fp = frame[0];
++		}
++	}
++}
+diff --git a/osfmk/kern/stack.c b/osfmk/kern/stack.c
+index 1111ccf..b2a685d 100644
+--- a/osfmk/kern/stack.c
++++ b/osfmk/kern/stack.c
+@@ -30,6 +30,7 @@
+  */
+ 
+ #include <mach/mach_host.h>
++#include <linux64/linux64.h>
+ #include <mach/mach_types.h>
+ #include <mach/processor_set.h>
+ 
+@@ -185,6 +186,24 @@ STARTUP(TUNABLES, STARTUP_RANK_MIDDLE, stack_init);
+  *	block.
+  */
+ 
++/*
++ * LINUX64 (xnulinux): an exception taken on an XNU kernel stack enters Linux's vectors, whose overflow check wants
++ * bit THREAD_SHIFT (14) of sp clear, as on Linux's 2*THREAD_SIZE-aligned stacks. Hosted, each stack starts on a
++ * 32 KiB boundary. The allocation's mask aligns the address after its first guard page (kernel_memory_allocate with
++ * KMA_GUARD_FIRST: the start plus one page is 32 KiB aligned), so the stack sits one page plus 32 KiB above the start
++ * (the two guard pages, then unused wired pages, then the stack, then the upper guard page), for any page size.
++ */
++static inline vm_offset_t
++linux64_stack_lead(void)
++{
++	return linux64_hook ? ptoa(1) + 0x8000 : ptoa(2);
++}
++static inline vm_offset_t
++linux64_stack_mask(void)
++{
++	return linux64_hook ? (stack_addr_mask | 0x7fff) : stack_addr_mask;
++}
++
+ static vm_offset_t
+ stack_alloc_internal(void)
+ {
+@@ -218,7 +237,7 @@ stack_alloc_internal(void)
+ 		 */
+ 
+ 		kernel_memory_allocate(kernel_map, &stack,
+-		    kernel_stack_size + ptoa(3), stack_addr_mask,
++		    kernel_stack_size + linux64_stack_lead() + ptoa(1), linux64_stack_mask(),
+ 		    flags, VM_KERN_MEMORY_STACK);
+ 
+ 		/*
+@@ -226,7 +245,10 @@ stack_alloc_internal(void)
+ 		 * guard pages.  Skip past them to get the actual stack base address.
+ 		 */
+ 
+-		stack += ptoa(2);
++		stack += linux64_stack_lead();
++		if (linux64_hook && (stack & 0x7fff)) {	/* Linux would take an exception on it for a stack overflow */
++			panic("linux64: kernel stack %p is not on a 32 KiB boundary", (void *)stack);
++		}
+ 	}
+ 	return stack;
+ }
+@@ -389,8 +411,8 @@ stack_collect(void)
+ 			stack = (vm_offset_t)vm_map_trunc_page(
+ 				stack,
+ 				VM_MAP_PAGE_MASK(kernel_map));
+-			stack -= ptoa(2);
+-			kmem_free(kernel_map, stack, kernel_stack_size + ptoa(3),
++			stack -= linux64_stack_lead();
++			kmem_free(kernel_map, stack, kernel_stack_size + linux64_stack_lead() + ptoa(1),
+ 			    KMF_GUARD_FIRST | KMF_GUARD_LAST | KMF_GUARD_STACK);
+ 			stack = 0;
+ 
+diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
+index 504b3fa..b80a055 100644
+--- a/osfmk/prng/prng_random.c
++++ b/osfmk/prng/prng_random.c
+@@ -27,6 +27,7 @@
+  */
+ 
+ #include <kern/locks.h>
++#include <linux64/linux64.h>
+ #include <kern/cpu_number.h>
+ #include <libkern/section_keywords.h>
+ #include <libkern/crypto/sha2.h>
+@@ -363,13 +364,24 @@ random_cpu_init(int cpu)
+ 		panic("random_cpu_init: kernel prng has not been installed");
+ 	}
+ 
+-	prng_funcs.initgen(prng_ctx, cpu);
++	if (prng_funcs.initgen != NULL) {
++		prng_funcs.initgen(prng_ctx, cpu);
++	}
+ }
+ 
+ /* export good random numbers to the rest of the kernel */
+ __mockable void
+ read_random(void * buffer, u_int numbytes)
+ {
++	/*
++	 * LINUX64 (xnulinux): without the corecrypto kext nobody calls
++	 * register_and_init_prng() and prng_funcs stays zeroed; hosted, the
++	 * host's generator (Linux's get_random_bytes) stands in.
++	 */
++	if (prng_funcs.generate == NULL && linux64_hook) {
++		linux64_random(buffer, numbytes);
++		return;
++	}
+ 	prng_funcs.refresh(prng_ctx);
+ 	read_random_generate(buffer, numbytes);
+ }
+@@ -428,7 +440,9 @@ write_random(void * buffer, u_int numbytes)
+ 		memcpy(seed, buffer, numbytes);
+ 	}
+ 
+-	prng_funcs.reseed(prng_ctx, sizeof(seed), seed);
++	if (prng_funcs.reseed != NULL) {
++		prng_funcs.reseed(prng_ctx, sizeof(seed), seed);
++	}
+ 	cc_clear(sizeof(seed), seed);
+ 
+ 	return 0;
