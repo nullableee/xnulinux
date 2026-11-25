@@ -37,6 +37,8 @@ extern "C" {
 int fki_version(void);
 void fki_log(const char *s, unsigned long len);
 void fki_log_alert(const char *s, unsigned long len);	/* KERN_ALERT: on the console even when it is quiet */
+/* Synchronous on-disk trace that survives a hard hang and a reboot. */
+int fki_debug_log(const char *s, unsigned long len);
 int fki_region_alloc(unsigned long size, struct fki_region *r);
 void fki_region_free(struct fki_region *r);
 /* A named blob from the firmware search path. */

@@ -340,6 +340,59 @@ void fki_log_alert(const char *s, unsigned long len)
 }
 EXPORT_SYMBOL(fki_log_alert);
 
+/*
+ * dmesg/journald are useless when XNU wedges the box with interrupts off:
+ * neither the reader nor the journal flusher gets scheduled. Append each
+ * trace line to a plain file and fsync it immediately so it survives both
+ * the hang and the hard reboot that follows.
+ */
+#define FKI_DEBUG_PATH "/home/spotlight/xnu-boot.log"
+static struct file *fki_debug_file;
+static fki_u64 fki_debug_off;
+static DEFINE_MUTEX(fki_debug_lock);
+
+int fki_debug_log(const char *s, unsigned long len)
+{
+	loff_t pos;
+	ssize_t n;
+
+	if (!s || !len)
+		return 0;
+	mutex_lock(&fki_debug_lock);
+	if (!fki_debug_file) {
+		mutex_unlock(&fki_debug_lock);
+		return -ENOENT;
+	}
+	pos = fki_debug_off;
+	n = kernel_write(fki_debug_file, s, len, &pos);
+	if (n > 0) {
+		fki_debug_off += n;
+		vfs_fsync(fki_debug_file, 0);
+	}
+	mutex_unlock(&fki_debug_lock);
+	return n < 0 ? n : 0;
+}
+EXPORT_SYMBOL(fki_debug_log);
+
+static void fki_debug_init(void)
+{
+	fki_debug_file = filp_open(FKI_DEBUG_PATH,
+	    O_WRONLY | O_CREAT | O_APPEND | O_LARGEFILE, 0600);
+	if (IS_ERR(fki_debug_file)) {
+		pr_warn("fki-x86: cannot open %s for tracing\n", FKI_DEBUG_PATH);
+		fki_debug_file = NULL;
+		return;
+	}
+	fki_debug_off = i_size_read(file_inode(fki_debug_file));
+}
+
+static void fki_debug_exit(void)
+{
+	if (fki_debug_file)
+		filp_close(fki_debug_file, NULL);
+	fki_debug_file = NULL;
+}
+
 fki_u64 fki_counter_frequency(void)
 {
 	return NSEC_PER_SEC;
@@ -766,12 +819,14 @@ static int __init fki_x86_init(void)
 		    (void *)(unsigned long)cpu);
 	}
 	fki_hostcall_init();
+	fki_debug_init();
 	pr_info("fki-x86: FKI-X86 v%d ready\n", FKI_X86_VERSION);
 	return 0;
 }
 
 static void __exit fki_x86_exit(void)
 {
+	fki_debug_exit();
 	fki_hostcall_exit();
 	pr_info("fki-x86: unloaded\n");
 }

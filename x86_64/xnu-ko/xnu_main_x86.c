@@ -57,6 +57,20 @@ module_param(stop_run, int, 0644);
 static void logs(const char *s)
 {
 	fki_log(s, strlen(s));
+	fki_debug_log(s, strlen(s));
+}
+
+static void debugf(const char *fmt, ...)
+{
+	char buf[256];
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	if (n > 0)
+		fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
 }
 
 /* ---- initial page tables -------------------------------------------------- */
@@ -376,9 +390,13 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 	    (unsigned long long)stack_va,
 	    (unsigned long long)XNU_UPCALL_VA,
 	    (unsigned long long)cr3_phys);
+	debugf("run: cr3=0x%llx stack=0x%llx tramp=0x%llx ba=0x%llx\n",
+	    (unsigned long long)cr3_phys, (unsigned long long)stack_va,
+	    (unsigned long long)XNU_UPCALL_VA, (unsigned long long)ba_phys);
 	logs("xnu86: entering vstart\n");
 	r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
 	pr_info("xnu86: vstart returned %ld\n", r);
+	debugf("run: vstart returned %ld\n", r);
 
 out_xsave:
 	fki_x86_shared_free(&mem.xsave);
@@ -432,6 +450,9 @@ static int __init xnu_x86_init(void)
 	a_ipi = macho_x86_sym(&img, "_linux64_ipi_pending");
 	pr_info("xnu86: _vstart=0x%llx _hook=0x%llx _slide=0x%llx\n",
 	    a_vstart, a_hook, a_slide);
+	debugf("loader: vstart=0x%llx hook=0x%llx slide=0x%llx\n",
+	    (unsigned long long)a_vstart, (unsigned long long)a_hook,
+	    (unsigned long long)a_slide);
 	if (!a_vstart || (!a_hook && !allow_unhosted)) {
 		pr_err("xnu86: required symbols missing (hook=%llx, allow_unhosted=%d)\n",
 		    a_hook, allow_unhosted);
@@ -459,6 +480,9 @@ static int __init xnu_x86_init(void)
 	kc_phys = mem.kc.pa;
 	kc_virt = (u64_t)mem.kc.va;
 	xnu_slide = 0;
+	debugf("loader: kc pa=0x%llx va=%p size=0x%llx\n",
+	    (unsigned long long)kc_phys, mem.kc.va,
+	    (unsigned long long)(img.vmhigh - img.vmlow));
 	xnu_hook_set_translate(xnu_va_translate);
 
 	ba = kzalloc(sizeof(*ba), GFP_KERNEL);
@@ -491,6 +515,8 @@ static int __init xnu_x86_init(void)
 	}
 	memcpy(mem.ba.va, ba, sizeof(*ba));
 	ba_phys = mem.ba.pa;
+	debugf("loader: boot_args pa=0x%llx efi pa=0x%llx\n",
+	    (unsigned long long)ba_phys, (unsigned long long)efi_region.pa);
 
 	run_xnu(kc_phys, img.vmlow, img.vmhigh, ba_phys);
 

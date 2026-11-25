@@ -54,6 +54,12 @@ static const char *fault_name(unsigned long v)
 
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 {
+	char trace[128];
+
+	snprintf(trace, sizeof(trace), "upcall: call=%lu a1=0x%lx a2=0x%lx\n",
+	    call, a1, a2);
+	fki_debug_log(trace, strlen(trace));
+
 	switch (call) {
 	case LINUX64_CALL_IDLE:
 		/* a1 = ns to the next XNU timer, a2 = pending-IPI word */
