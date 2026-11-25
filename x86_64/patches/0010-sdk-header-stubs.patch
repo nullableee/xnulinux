@@ -8,7 +8,7 @@ iig-generated DriverKit and libfirehose private headers. Provide the minimal
 declarations needed by amfi, code signing, libkern C++ and os/log.
 
 ---
- 23 files changed, 380 insertions(+)
+ 23 files changed, 382 insertions(+)
 
 diff --git a/EXTERNAL_HEADERS/CodeSignature/Entitlements.h b/EXTERNAL_HEADERS/CodeSignature/Entitlements.h
 new file mode 100644
@@ -363,10 +363,10 @@ index 0000000..d8440e8
 +#endif /* _DRIVERKIT_IOUSERCLIENT_H_ */
 diff --git a/EXTERNAL_HEADERS/DriverKit/IOUserServer.h b/EXTERNAL_HEADERS/DriverKit/IOUserServer.h
 new file mode 100644
-index 0000000..b269e53
+index 0000000..006b81f
 --- /dev/null
 +++ b/EXTERNAL_HEADERS/DriverKit/IOUserServer.h
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,16 @@
 +/* SPDX-License-Identifier: APSL-2.0 */
 +/*
 + * Minimal DriverKit/IOUserServer.h stub for the hosted x86_64 XNU build.
@@ -379,6 +379,8 @@ index 0000000..b269e53
 +
 +#define IOUserServer_Methods
 +#define IOUserServer_KernelMethods
++
++class OSAction;
 +
 +#endif /* _DRIVERKIT_IOUSERSERVER_H_ */
 diff --git a/EXTERNAL_HEADERS/DriverKit/IOWorkGroup.h b/EXTERNAL_HEADERS/DriverKit/IOWorkGroup.h

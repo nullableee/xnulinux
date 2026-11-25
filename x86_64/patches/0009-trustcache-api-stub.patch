@@ -16,7 +16,7 @@ compile the affected translation units.
 
 diff --git a/EXTERNAL_HEADERS/TrustCache/API.h b/EXTERNAL_HEADERS/TrustCache/API.h
 new file mode 100644
-index 0000000..8a64b12
+index 0000000..11e2c58
 --- /dev/null
 +++ b/EXTERNAL_HEADERS/TrustCache/API.h
 @@ -0,0 +1,98 @@
@@ -110,7 +110,7 @@ index 0000000..8a64b12
 +	bool allow_second_static_cache,
 +	bool allow_engineering_caches,
 +	bool allow_legacy_caches,
-+	uint32_t img4_runtime_mode)
++	const void *img4_runtime_mode)
 +{
 +	(void)runtime; (void)mutable_runtime;
 +	(void)allow_second_static_cache; (void)allow_engineering_caches;
