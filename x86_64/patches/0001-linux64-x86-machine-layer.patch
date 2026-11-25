@@ -1006,6 +1006,7 @@ index b2aae03..af01ff3 100644
 +	thread_t t;
 +	int n = 0;
 +	extern int proc_pid(struct proc *);
++	extern char *proc_name_address(void *);
 +	queue_iterate(&threads, t, thread_t, threads) {
 +		if (++n > 400) {
 +			break;
@@ -1020,19 +1021,19 @@ index b2aae03..af01ff3 100644
 +		} else {
 +			kprintf("linux64 proc %d %s\n", proc_pid((struct proc *)bp), proc_name_address((struct proc *)bp));
 +		}
-+		struct arm_kernel_saved_state *ss = (struct arm_kernel_saved_state *)(void *)t->machine.kstackptr;
-+		uint64_t lr = 0, fp = 0;
++		x86_saved_state64_t *ss = saved_state64(t->machine.iss);
++		uint64_t rip = 0, rbp = 0;
 +		if (ss != NULL && t->kernel_stack != 0) {
-+			lr = ss->lr | 0xffffff8000000000ULL;
-+			fp = ss->fp;
++			rip = ss->isf.rip | 0xffffff8000000000ULL;
++			rbp = ss->rbp;
 +		}
-+		kprintf("linux64 thread %p tid %llu state 0x%x pri %d wait %p cont %p lr 0x%llx\n",
-+		    t, t->thread_id, t->state, t->sched_pri, (void *)t->wait_event, (void *)t->continuation, lr);
-+		for (int f = 0; f < 14 && fp != 0 && t->kernel_stack != 0 &&
-+		    fp >= t->kernel_stack && fp < t->kernel_stack + kernel_stack_size; f++) {
-+			uint64_t *frame = (uint64_t *)fp;
++		kprintf("linux64 thread %p tid %llu state 0x%x pri %d wait %p cont %p rip 0x%llx\n",
++		    t, t->thread_id, t->state, t->sched_pri, (void *)t->wait_event, (void *)t->continuation, rip);
++		for (int f = 0; f < 14 && rbp != 0 && t->kernel_stack != 0 &&
++		    rbp >= t->kernel_stack && rbp < t->kernel_stack + kernel_stack_size; f++) {
++			uint64_t *frame = (uint64_t *)rbp;
 +			kprintf("linux64     frame 0x%llx\n", frame[1] | 0xffffff8000000000ULL);
-+			fp = frame[0];
++			rbp = frame[0];
 +		}
 +	}
 +}
