@@ -10,16 +10,16 @@ trust cache runtime; provide the minimal type definitions needed to
 compile the affected translation units.
 
 ---
- EXTERNAL_HEADERS/TrustCache/API.h | 92 ++++++++++++++++++++++++++++++
- 1 file changed, 92 insertions(+)
+ EXTERNAL_HEADERS/TrustCache/API.h | 99 ++++++++++++++++++++++++++++++
+ 1 file changed, 99 insertions(+)
  create mode 100644 EXTERNAL_HEADERS/TrustCache/API.h
 
 diff --git a/EXTERNAL_HEADERS/TrustCache/API.h b/EXTERNAL_HEADERS/TrustCache/API.h
 new file mode 100644
-index 0000000..3d853e5
+index 0000000..8a64b12
 --- /dev/null
 +++ b/EXTERNAL_HEADERS/TrustCache/API.h
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,98 @@
 +/* SPDX-License-Identifier: APSL-2.0 */
 +/*
 + * Minimal TrustCache API stub for the hosted x86_64 XNU build.
@@ -85,8 +85,15 @@ index 0000000..3d853e5
 +	const void *trustCacheEntry;
 +} TrustCacheQueryToken_t;
 +
-+typedef struct _TrustCacheRuntime TrustCacheRuntime_t;
-+typedef struct _TrustCacheMutableRuntime TrustCacheMutableRuntime_t;
++typedef struct _TrustCacheRuntime {
++	bool allowSecondStaticTC;
++	bool allowEngineeringTC;
++	uint64_t _opaque[8];
++} TrustCacheRuntime_t;
++
++typedef struct _TrustCacheMutableRuntime {
++	uint64_t _opaque[8];
++} TrustCacheMutableRuntime_t;
 +
 +typedef struct {
 +	const char *entitlementValue;
@@ -98,8 +105,8 @@ index 0000000..3d853e5
 +
 +static inline void
 +trustCacheInitializeRuntime(
-+	TrustCacheRuntime_t runtime,
-+	TrustCacheMutableRuntime_t mutable_runtime,
++	TrustCacheRuntime_t *runtime,
++	TrustCacheMutableRuntime_t *mutable_runtime,
 +	bool allow_second_static_cache,
 +	bool allow_engineering_caches,
 +	bool allow_legacy_caches,
