@@ -8,7 +8,7 @@ iig-generated DriverKit and libfirehose private headers. Provide the minimal
 declarations needed by amfi, code signing, libkern C++ and os/log.
 
 ---
- 23 files changed, 377 insertions(+)
+ 23 files changed, 380 insertions(+)
 
 diff --git a/EXTERNAL_HEADERS/CodeSignature/Entitlements.h b/EXTERNAL_HEADERS/CodeSignature/Entitlements.h
 new file mode 100644
@@ -400,10 +400,10 @@ index 0000000..25a87b5
 +#endif /* _DRIVERKIT_IOWORKGROUP_H_ */
 diff --git a/EXTERNAL_HEADERS/DriverKit/OSAction.h b/EXTERNAL_HEADERS/DriverKit/OSAction.h
 new file mode 100644
-index 0000000..bb22015
+index 0000000..a94c9ed
 --- /dev/null
 +++ b/EXTERNAL_HEADERS/DriverKit/OSAction.h
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,14 @@
 +/* SPDX-License-Identifier: APSL-2.0 */
 +/*
 + * Minimal DriverKit/OSAction.h stub for the hosted x86_64 XNU build.
@@ -413,6 +413,9 @@ index 0000000..bb22015
 + */
 +#ifndef _DRIVERKIT_OSACTION_H_
 +#define _DRIVERKIT_OSACTION_H_
++
++class OSAction;
++struct OSActionWaitToken;
 +
 +#endif /* _DRIVERKIT_OSACTION_H_ */
 diff --git a/EXTERNAL_HEADERS/DriverKit/OSObject.h b/EXTERNAL_HEADERS/DriverKit/OSObject.h
