@@ -80,6 +80,13 @@ jobs:
               grep -E 'error:|fatal error:|undefined|ld:|make.*Error' "$LOG" | tail -80 || tail -120 "$LOG"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            # Annotations are readable from the public checks API even when the
+            # job log itself needs repo admin rights.
+            grep -E 'error:|fatal error:|undefined|ld:|make.*Error' "$LOG" | tail -60 | while IFS= read -r line; do
+              line=${line//$'%'/%25}
+              line=${line//$'\r'/%0D}
+              echo "::error::XNU_BUILD_ERROR $line"
+            done
             exit "$rc"
           fi
 
