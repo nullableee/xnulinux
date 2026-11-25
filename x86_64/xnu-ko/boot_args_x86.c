@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: APSL-2.0 */
 /*
  * LINUX64 (xnulinux): synthesize the x86_64 boot_args that vstart() expects.
  *
