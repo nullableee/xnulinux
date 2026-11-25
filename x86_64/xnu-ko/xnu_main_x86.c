@@ -55,6 +55,16 @@ static struct xnu_region {
 	struct fki_region linux_xsave;
 } mem;
 
+/*
+ * boot_args, the EFI map and the device tree must live at physical addresses
+ * above the kernel image's unslid link range. XNU converts their PAs with
+ * ml_static_ptovirt(); below that range the static-alias PTEs are overwritten
+ * by the kernel image overlay in build_init_pt(), so XNU would read kernel
+ * data instead of the structures we prepared. Each of these is carved out of
+ * a larger contiguous allocation; the backing region owns the pages.
+ */
+static struct fki_region ba_backing, efi_backing, dt_backing;
+
 static struct xnu_image_x86 img;
 static struct linux64_host_map host_map_store;
 static u64_t a_vstart, a_hook, a_slide, a_cpu_entry, a_vint, a_ipi;
@@ -398,6 +408,32 @@ static void free_init_pt(struct init_pt *pt)
 		fki_x86_shared_free(&pt->region);
 }
 
+/*
+ * Allocate a small region whose physical address is at or above @pa_min.
+ * alloc_contig_pages() cannot choose a PFN range, so reserve enough pages to
+ * span @pa_min and carve the usable part out of them. The caller keeps both
+ * regions alive until the hosted run ends.
+ */
+static int shared_alloc_above(u64_t pa_min, unsigned long size,
+    struct fki_region *out, struct fki_region *backing)
+{
+	u64_t off = 0;
+
+	if (fki_x86_shared_alloc(size + (unsigned long)pa_min, backing))
+		return -ENOMEM;
+	if (backing->pa < pa_min)
+		off = ALIGN(pa_min - backing->pa, PAGE_SIZE);
+	if (off + size > backing->size) {
+		fki_x86_shared_free(backing);
+		return -ENOMEM;
+	}
+	out->va = (void *)((char *)backing->va + off);
+	out->pa = backing->pa + off;
+	out->size = size;
+	out->handle = NULL; /* backing owns the pages */
+	return 0;
+}
+
 /* ---- EFI memory map ------------------------------------------------------- */
 
 #define MAX_EFI_RANGES 32
@@ -405,7 +441,7 @@ static struct x86_efi_memory_range efi_map[MAX_EFI_RANGES];
 static struct fki_region efi_region;
 static unsigned int efi_count;
 
-static int build_efi_map(u64_t total)
+static int build_efi_map(u64_t total, u64_t pa_min)
 {
 	static const u32_t types[] = {
 		X86_EFI_RESERVED_MEMORY_TYPE,
@@ -417,7 +453,8 @@ static int build_efi_map(u64_t total)
 	unsigned int i;
 	u64_t cursor = 0, per = DIV_ROUND_UP(total, ARRAY_SIZE(types));
 
-	if (fki_x86_shared_alloc(sizeof(efi_map), &efi_region))
+	if (shared_alloc_above(pa_min, sizeof(efi_map),
+	    &efi_region, &efi_backing))
 		return -ENOMEM;
 	for (i = 0; i < ARRAY_SIZE(types); i++) {
 		u64_t pages = DIV_ROUND_UP(per, PAGE_SIZE);
@@ -459,11 +496,12 @@ struct linux64_dt_node {
 
 #define LINUX64_DT_SIZE sizeof(struct linux64_dt_node)
 
-static int build_device_tree(void)
+static int build_device_tree(u64_t pa_min)
 {
 	struct linux64_dt_node *dt;
 
-	if (fki_x86_shared_alloc(LINUX64_DT_SIZE, &mem.dt))
+	if (shared_alloc_above(pa_min, LINUX64_DT_SIZE,
+	    &mem.dt, &dt_backing))
 		return -ENOMEM;
 	dt = mem.dt.va;
 
@@ -642,6 +680,14 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	memset((char *)mem.kc.va + image_size, 0, kc_size - image_size);
 
 	host_map_store.count = 0;
+	/* Preserve the static aliases of our boot structures across CR3 switches. */
+	record_host_map(XNU_VM_MIN_KERNEL | mem.ba.pa, mem.ba.pa);
+	record_host_map(XNU_VM_MIN_KERNEL | mem.dt.pa, mem.dt.pa);
+	record_host_map(XNU_VM_MIN_KERNEL | efi_region.pa, efi_region.pa);
+	debugf("loader: static alias ba=0x%llx dt=0x%llx efi=0x%llx\n",
+	    (unsigned long long)(XNU_VM_MIN_KERNEL | mem.ba.pa),
+	    (unsigned long long)(XNU_VM_MIN_KERNEL | mem.dt.pa),
+	    (unsigned long long)(XNU_VM_MIN_KERNEL | efi_region.pa));
 	err = build_init_pt(&pt, kc_pa, vmlow, vmlow + kc_size, ram_mb << 20,
 	    stack_va, stack_size, &cr3_phys);
 	if (err) {
@@ -734,7 +780,7 @@ static int __init xnu_x86_init(void)
 	const void *data = NULL;
 	unsigned long size = 0;
 	void *blob = NULL;
-	u64_t total, map_top;
+	u64_t total, map_top, pa_min;
 	u64_t ba_phys;
 	struct x86_boot_args *ba;
 	int err;
@@ -781,6 +827,14 @@ static int __init xnu_x86_init(void)
 
 	total = (u64_t)ram_mb << 20;
 	map_top = ALIGN(total, 2UL << 20);
+	/*
+	 * build_init_pt() maps the kernel image at its unslid link VAs, which
+	 * overwrites every ml_static_ptovirt() PTE for PA < the image's link
+	 * range. boot_args, the EFI map and the DT must therefore sit above it.
+	 */
+	pa_min = ALIGN(img.vmhigh - XNU_VM_MIN_KERNEL + PAGE_SIZE, PAGE_SIZE);
+	debugf("loader: boot structures must be above pa=0x%llx\n",
+	    (unsigned long long)pa_min);
 	err = fki_x86_shared_alloc(img.vmhigh - img.vmlow + (8 << 20), &mem.kc);
 	if (err) {
 		pr_err("xnu86: cannot allocate kernel memory (%d)\n", err);
@@ -811,30 +865,34 @@ static int __init xnu_x86_init(void)
 		return -ENOMEM;
 	}
 	cmdline_copy = kstrdup(boot_line, GFP_KERNEL);
-	if (fki_x86_shared_alloc(sizeof(*ba) + PAGE_SIZE, &mem.ba)) {
+	if (shared_alloc_above(pa_min, sizeof(*ba) + PAGE_SIZE,
+	    &mem.ba, &ba_backing)) {
 		kfree(cmdline_copy);
 		kfree(ba);
 		fki_x86_shared_free(&mem.kc);
 		fki_blob_put(blob);
 		return -ENOMEM;
 	}
-	err = build_efi_map(total);
+	err = build_efi_map(total, pa_min);
 	if (err) {
 		pr_err("xnu86: cannot build EFI map (%d)\n", err);
 		kfree(cmdline_copy);
 		kfree(ba);
 		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&ba_backing);
 		fki_x86_shared_free(&mem.kc);
 		fki_blob_put(blob);
 		return err;
 	}
-	err = build_device_tree();
+	err = build_device_tree(pa_min);
 	if (err) {
 		pr_err("xnu86: cannot build device tree (%d)\n", err);
 		kfree(cmdline_copy);
 		kfree(ba);
 		fki_x86_shared_free(&efi_region);
+		fki_x86_shared_free(&efi_backing);
 		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&ba_backing);
 		fki_x86_shared_free(&mem.kc);
 		fki_blob_put(blob);
 		return err;
@@ -846,19 +904,24 @@ static int __init xnu_x86_init(void)
 		kfree(cmdline_copy);
 		kfree(ba);
 		fki_x86_shared_free(&mem.dt);
+		fki_x86_shared_free(&dt_backing);
 		fki_x86_shared_free(&efi_region);
+		fki_x86_shared_free(&efi_backing);
 		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&ba_backing);
 		fki_x86_shared_free(&mem.kc);
 		fki_blob_put(blob);
 		return err;
 	}
 
 	/*
-	 * KC_hdrs_vaddr is passed through ml_static_ptovirt() by vstart(), so it
-	 * must be a physical address.  Our image is copied unslid at vmlow.
+	 * KC_hdrs_vaddr is passed through ml_static_ptovirt() by vstart(). The
+	 * static alias of the kernel's link offset is exactly the unslid VA that
+	 * build_init_pt() overlays with our copied image, so use the link offset
+	 * rather than the arbitrary physical address of the allocation.
 	 */
 	err = linux64_boot_args_init(ba, kc_phys, img.vmhigh - img.vmlow,
-	    kc_phys + (img.text_vmaddr - img.vmlow), cmdline_copy,
+	    img.text_vmaddr - XNU_VM_MIN_KERNEL, cmdline_copy,
 	    (u32_t)efi_region.pa, efi_map, efi_count, sizeof(efi_map[0]),
 	    total, 0, 0);
 	if (err) {
@@ -866,8 +929,11 @@ static int __init xnu_x86_init(void)
 		kfree(cmdline_copy);
 		kfree(ba);
 		fki_x86_shared_free(&mem.dt);
+		fki_x86_shared_free(&dt_backing);
 		fki_x86_shared_free(&efi_region);
+		fki_x86_shared_free(&efi_backing);
 		fki_x86_shared_free(&mem.ba);
+		fki_x86_shared_free(&ba_backing);
 		fki_x86_shared_free(&mem.kc);
 		fki_blob_put(blob);
 		return err;
@@ -888,8 +954,11 @@ static int __init xnu_x86_init(void)
 	kfree(cmdline_copy);
 	kfree(ba);
 	fki_x86_shared_free(&mem.dt);
+	fki_x86_shared_free(&dt_backing);
 	fki_x86_shared_free(&efi_region);
+	fki_x86_shared_free(&efi_backing);
 	fki_x86_shared_free(&mem.ba);
+	fki_x86_shared_free(&ba_backing);
 	fki_x86_shared_free(&mem.kc);
 	fki_blob_put(blob);
 	return 0;
