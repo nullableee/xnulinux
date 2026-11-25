@@ -116,12 +116,14 @@ MAKE_ENV=(
 
 make -C "$TREE" build "${MAKE_ENV[@]}"
 
-KERN=$(find "$SYMROOT" "$DSTROOT" -type f \( -name kernel -o -name 'kernel.development' \) -perm -u+x 2>/dev/null | head -1)
+KERN=$(find "$OBJROOT" "$SYMROOT" "$DSTROOT" -type f \( -name kernel -o -name 'kernel.development' \) -perm -u+x 2>/dev/null | head -1)
 if [ -z "$KERN" ]; then
-	KERN=$(find "$SYMROOT" "$DSTROOT" -type f -name 'kernel.development.unstripped*' -perm -u+x 2>/dev/null | head -1)
+	KERN=$(find "$OBJROOT" "$SYMROOT" "$DSTROOT" -type f -name 'kernel.development.unstripped*' -perm -u+x 2>/dev/null | head -1)
 fi
 if [ -z "$KERN" ]; then
 	echo "ERROR: built kernel not found" >&2
+	echo "OBJROOT kernel candidates:" >&2
+	find "$OBJROOT" -type f -name 'kernel*' -print 2>/dev/null | head -50 >&2
 	echo "SYMROOT kernel candidates:" >&2
 	find "$SYMROOT" -type f -name 'kernel*' -print 2>/dev/null | head -50 >&2
 	echo "DSTROOT kernel candidates:" >&2
