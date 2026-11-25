@@ -81,8 +81,13 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
             # Annotations are readable from the public checks API even when the
-            # job log itself needs repo admin rights.
-            grep -E 'error:|fatal error:|undefined|ld:|make.*Error' "$LOG" | tail -60 | while IFS= read -r line; do
+            # job log itself needs repo admin rights.  Linker detail lines do
+            # not match the regex below, so emit them first; the checks API
+            # keeps only a limited number of annotations per run.
+            {
+              grep -A5 -E 'duplicate symbol|Undefined symbols' "$LOG" || true
+              grep -E 'error:|fatal error:|undefined|ld:|make.*Error' "$LOG" | tail -60 || true
+            } | awk '!seen[$0]++' | while IFS= read -r line; do
               line=${line//$'%'/%25}
               line=${line//$'\r'/%0D}
               echo "::error::XNU_BUILD_ERROR $line"
