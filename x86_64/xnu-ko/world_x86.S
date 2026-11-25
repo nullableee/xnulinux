@@ -65,7 +65,7 @@
 xnu_world_call_x86:
 	endbr64
 	pushfq
-	cli
+	/* fki_x86_enter() masks IRQs and saves the caller's real IF state. */
 	pushq	%rbx
 	pushq	%rbp
 	pushq	%r12
@@ -145,6 +145,8 @@ xnu_world_upcall_x86:
 	pushq	%r12
 	pushq	%r13
 	pushq	%r14
+	pushq	%r15		/* XNU uses r15 as a saved-state pointer. */
+	subq	$8, %rsp		/* Keep the SysV stack 16-byte aligned at calls. */
 	/* Keep the three hook arguments across CPUID (which clobbers %rdx). */
 	movq	%rdi, %r10
 	movq	%rsi, %r11
@@ -178,6 +180,8 @@ xnu_world_upcall_x86:
 	call	fki_x86_enter
 	movq	%rax, XW_HOOK_COOKIE(%r15)
 
+	addq	$8, %rsp
+	popq	%r15
 	popq	%r14
 	popq	%r13
 	popq	%r12
