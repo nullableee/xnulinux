@@ -68,8 +68,12 @@ extern struct xnu_world_x86 *xnu_worlds_x86[];
 
 /* Run fn(arg) in the XNU world. 0: fn returned, 1: the hook ended the run. */
 long xnu_world_call_x86(struct xnu_world_x86 *w, unsigned long fn, unsigned long arg);
+/* Linux CR3, kept in module data so the shared hook can switch worlds. */
+extern unsigned long xnu_host_cr3_x86;
 /* Address XNU calls as linux64_hook. Enters the Linux world and calls xnu_hook_x86(). */
 void xnu_world_upcall_x86(void);
+/* Module-text hook gate: restore Linux CR3, then jump to the upcall. */
+void xnu_world_hook_trampoline_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
 /* Translate XNU virtual addresses in hook arguments to host aliases. */

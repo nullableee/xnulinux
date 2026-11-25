@@ -63,6 +63,7 @@
 	.globl xnu_world_call_x86
 	.type  xnu_world_call_x86, @function
 xnu_world_call_x86:
+	endbr64
 	pushfq
 	cli
 	pushq	%rbx
@@ -205,5 +206,20 @@ xnu_world_upcall_x86:
 	popfq
 	ret
 	.size	xnu_world_upcall_x86, . - xnu_world_upcall_x86
+
+/*
+ * Address XNU sees as linux64_hook. It must live in module text: the host
+ * loader maps these pages into the XNU page tables for the downcall, and
+ * Linux already maps them executable for the instructions after the CR3
+ * switch. Only the host CR3 variable is read before the switch.
+ */
+	.globl xnu_world_hook_trampoline_x86
+	.type  xnu_world_hook_trampoline_x86, @function
+xnu_world_hook_trampoline_x86:
+	endbr64
+	movq	xnu_host_cr3_x86(%rip), %rax
+	movq	%rax, %cr3
+	jmp	xnu_world_upcall_x86
+	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86
 
 	.section .note.GNU-stack,"",@progbits

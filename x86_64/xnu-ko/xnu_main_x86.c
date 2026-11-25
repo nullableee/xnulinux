@@ -15,10 +15,12 @@
 
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
+#include <linux/vmalloc.h>
 
 MODULE_LICENSE("Proprietary");
 MODULE_DESCRIPTION("XNU x86_64 host loader (APSL-2.0)");
@@ -42,16 +44,16 @@ static struct xnu_region {
 	struct fki_region kc;
 	struct fki_region ba;
 	struct fki_region pt;
-	struct fki_region stack;
 	struct fki_region xsave;
-	struct fki_region tramp;
 } mem;
 
 static struct xnu_image_x86 img;
 static u64_t a_vstart, a_hook, a_slide, a_cpu_entry, a_vint, a_ipi;
 static u64_t kc_phys, kc_virt, xnu_slide;
-/* XNU-visible addresses of the shared upcall gate and the initial stack. */
+/* XNU-visible address of the module-text upcall gate. */
 static u64_t xnu_upcall_va;
+/* Read by xnu_world_hook_trampoline_x86() before it leaves XNU's CR3. */
+unsigned long xnu_host_cr3_x86;
 static char *cmdline_copy;
 static int stop_run;
 module_param(stop_run, int, 0644);
@@ -90,12 +92,26 @@ static void debugf(const char *fmt, ...)
 #define PT_E_LARGE        0x080
 
 /*
- * Host kernel text is not mapped by the minimal XNU page tables. Put a tiny
- * trampoline in shared DMA32 memory instead: it switches CR3 back to Linux and
- * jumps to xnu_world_upcall_x86(), which then restores the rest of the world.
- * The trampoline and the initial XNU stack live in one 2 MiB PDE.
+ * The world switch and the hook gate execute from module text.  Map the
+ * handful of host pages they touch into the XNU page tables at their native
+ * Linux virtual addresses: module text/data, the current Linux stack (used
+ * until fki_x86_enter() switches stacks) and the XNU stack itself.  The XNU
+ * stack is vmalloc-backed so upcalls can also push on it after switching back
+ * to Linux's CR3.
  */
-#define XNU_EXTRA_VA      0xffffff8040000000ULL
+#define HOST_PDPT_PAGES 8
+#define HOST_PDE_PAGES  8
+#define HOST_PTE_PAGES  8
+
+#define PT_PML4       0
+#define PT_PDPT_ID    1
+#define PT_PDE_ID     2
+#define PT_PDPT_K     3
+#define PT_PDE_K      4
+#define PT_HOST_PDPT  (PT_PDE_K + 1)
+#define PT_HOST_PDE   (PT_HOST_PDPT + HOST_PDPT_PAGES)
+#define PT_HOST_PTE   (PT_HOST_PDE + HOST_PDE_PAGES)
+#define PT_PTE_K      (PT_HOST_PTE + HOST_PTE_PAGES)
 
 struct init_pt {
 	u64_t *pml4;
@@ -103,16 +119,116 @@ struct init_pt {
 	u64_t *pde_id;
 	u64_t *pdpt_k;
 	u64_t *pde_k;
-	u64_t *pde_extra;
-	u64_t *pte_extra;
 	u64_t **pte_k;
 	unsigned long n_pte_pages;
+	u64_t *host_pdpt[HOST_PDPT_PAGES];
+	u64_t *host_pde[HOST_PDE_PAGES];
+	u64_t *host_pte[HOST_PTE_PAGES];
+	unsigned int n_host_pdpt, n_host_pde, n_host_pte;
 	struct fki_region region;
 };
 
+static u64_t *pt_page_va(struct init_pt *pt, u64_t pt_pa, unsigned int idx)
+{
+	return (u64_t *)((char *)pt->region.va + ((u64_t)idx << PAGE_SHIFT));
+}
+
+static u64_t pt_page_pa(u64_t pt_pa, unsigned int idx)
+{
+	return pt_pa + ((u64_t)idx << PAGE_SHIFT);
+}
+
+/* Lazily allocate a child table, reusing the one already installed by the
+ * kernel-half mapping (PML4[511] -> pdpt_k) when possible. */
+static u64_t *pt_child_table(struct init_pt *pt, u64_t pt_pa, u64_t *parent,
+    unsigned long index, u64_t **pool, unsigned int *used, unsigned int max,
+    unsigned int base_idx)
+{
+	u64_t entry = parent[index];
+	u64_t pa;
+	unsigned int n;
+
+	if (!entry) {
+		if (*used >= max)
+			return NULL;
+		n = (*used)++;
+		pool[n] = pt_page_va(pt, pt_pa, base_idx + n);
+		entry = pt_page_pa(pt_pa, base_idx + n) |
+		    PT_E_PRESENT | PT_E_WRITABLE;
+		parent[index] = entry;
+	}
+	pa = entry & PAGE_MASK;
+	return (u64_t *)((char *)pt->region.va + (pa - pt_pa));
+}
+
+static void map_host_page(struct init_pt *pt, u64_t pt_pa, unsigned long va)
+{
+	struct page *page = vmalloc_to_page((void *)va);
+	u64_t *pdpt, *pde, *pte;
+	unsigned long pml4_i, pdpt_i, pde_i, pte_i;
+	u64_t pa;
+
+	if (!page)
+		return;
+	pa = page_to_phys(page);
+	if (!pa)
+		return;
+
+	pml4_i = (va >> 39) & 0x1ffUL;
+	pdpt_i = (va >> 30) & 0x1ffUL;
+	pde_i = (va >> 21) & 0x1ffUL;
+	pte_i = (va >> 12) & 0x1ffUL;
+
+	pdpt = pt_child_table(pt, pt_pa, pt->pml4, pml4_i,
+	    pt->host_pdpt, &pt->n_host_pdpt, HOST_PDPT_PAGES, PT_HOST_PDPT);
+	if (!pdpt)
+		return;
+	pde = pt_child_table(pt, pt_pa, pdpt, pdpt_i,
+	    pt->host_pde, &pt->n_host_pde, HOST_PDE_PAGES, PT_HOST_PDE);
+	if (!pde)
+		return;
+	pte = pt_child_table(pt, pt_pa, pde, pde_i,
+	    pt->host_pte, &pt->n_host_pte, HOST_PTE_PAGES, PT_HOST_PTE);
+	if (!pte)
+		return;
+	pte[pte_i] = pa | PT_E_PRESENT | PT_E_WRITABLE;
+}
+
+static void map_host_range(struct init_pt *pt, u64_t pt_pa,
+    unsigned long start, unsigned long end)
+{
+	unsigned long va;
+
+	for (va = start & PAGE_MASK; va < end; va += PAGE_SIZE)
+		map_host_page(pt, pt_pa, va);
+}
+
+static void map_host_code(struct init_pt *pt, u64_t pt_pa,
+    u64_t xnu_stack_va, u64_t stack_size)
+{
+	unsigned long sp = (unsigned long)&sp;
+	unsigned long xnu = (unsigned long)xnu_world_call_x86;
+	unsigned long fki = (unsigned long)fki_x86_enter;
+	unsigned long worlds_va = (unsigned long)worlds;
+	unsigned long cr3_va = (unsigned long)&xnu_host_cr3_x86;
+
+	map_host_range(pt, pt_pa, xnu - 4 * PAGE_SIZE, xnu + 4 * PAGE_SIZE);
+	map_host_range(pt, pt_pa, fki - 8 * PAGE_SIZE, fki + 8 * PAGE_SIZE);
+	map_host_range(pt, pt_pa, worlds_va - PAGE_SIZE,
+	    worlds_va + 4 * PAGE_SIZE);
+	map_host_range(pt, pt_pa, cr3_va - PAGE_SIZE, cr3_va + PAGE_SIZE);
+	map_host_range(pt, pt_pa, sp - 16 * PAGE_SIZE, sp + 16 * PAGE_SIZE);
+	map_host_range(pt, pt_pa, xnu_stack_va, xnu_stack_va + stack_size);
+	debugf("pt: host sp=0x%lx xnu=0x%lx fki=0x%lx worlds=0x%lx "
+	    "cr3var=0x%lx stack=0x%llx pdpt/pde/pte=%u/%u/%u\n",
+	    sp, xnu, fki, worlds_va, cr3_va,
+	    (unsigned long long)xnu_stack_va, pt->n_host_pdpt,
+	    pt->n_host_pde, pt->n_host_pte);
+}
+
 static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
-    u64_t vmhigh, u64_t map_top, u64_t tramp_pa, u64_t stack_pa,
-    u64_t stack_size, u64_t *out_phys)
+    u64_t vmhigh, u64_t map_top, u64_t xnu_stack_va, u64_t stack_size,
+    u64_t *out_phys)
 {
 	const unsigned long id_n_pde = DIV_ROUND_UP(map_top, 2UL << 20);
 	const unsigned long k_pages = DIV_ROUND_UP(vmhigh - vmlow, PAGE_SIZE);
@@ -124,15 +240,11 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 	 * the page tables allocated from physfree.  One PTE page covers 2 MiB.
 	 */
 	const unsigned long k_n_pte = DIV_ROUND_UP(map_top, 2UL << 20);
-	const unsigned long stack_pages = stack_size >> PAGE_SHIFT;
 	unsigned long pt_size, i, n;
 	u64_t pa;
 
-	if (!stack_pages || stack_pages > 511)
-		return -EINVAL;
-
 	memset(pt, 0, sizeof(*pt));
-	pt_size = 7 * PAGE_SIZE + k_n_pte * PAGE_SIZE;
+	pt_size = (PT_PTE_K + k_n_pte) * PAGE_SIZE;
 	if (fki_x86_shared_alloc(pt_size, &pt->region))
 		return -ENOMEM;
 	pt->pte_k = kzalloc(k_n_pte * sizeof(*pt->pte_k), GFP_KERNEL);
@@ -144,31 +256,29 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 
 	pa = pt->region.pa;
 	pt->pml4 = (u64_t *)pt->region.va;
-	pt->pdpt_id = (u64_t *)((char *)pt->region.va + PAGE_SIZE);
-	pt->pde_id = (u64_t *)((char *)pt->region.va + 2 * PAGE_SIZE);
-	pt->pdpt_k = (u64_t *)((char *)pt->region.va + 3 * PAGE_SIZE);
-	pt->pde_k = (u64_t *)((char *)pt->region.va + 4 * PAGE_SIZE);
-	pt->pde_extra = (u64_t *)((char *)pt->region.va + 5 * PAGE_SIZE);
-	pt->pte_extra = (u64_t *)((char *)pt->region.va + 6 * PAGE_SIZE);
+	pt->pdpt_id = (u64_t *)pt_page_va(pt, pa, PT_PDPT_ID);
+	pt->pde_id = (u64_t *)pt_page_va(pt, pa, PT_PDE_ID);
+	pt->pdpt_k = (u64_t *)pt_page_va(pt, pa, PT_PDPT_K);
+	pt->pde_k = (u64_t *)pt_page_va(pt, pa, PT_PDE_K);
 	for (i = 0; i < k_n_pte; i++)
 		pt->pte_k[i] =
-		    (u64_t *)((char *)pt->region.va + (7 + i) * PAGE_SIZE);
+		    (u64_t *)pt_page_va(pt, pa, PT_PTE_K + i);
 
 	memset(pt->region.va, 0, pt_size);
 
 	/* identity map of low physical memory (2 MiB pages) */
-	pt->pml4[0] = (pa + PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
-	pt->pdpt_id[0] = (pa + 2 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+	pt->pml4[0] = pt_page_pa(pa, PT_PDPT_ID) | PT_E_PRESENT | PT_E_WRITABLE;
+	pt->pdpt_id[0] = pt_page_pa(pa, PT_PDE_ID) | PT_E_PRESENT | PT_E_WRITABLE;
 	for (i = 0; i < id_n_pde; i++)
 		pt->pde_id[i] = (i << 21) | PT_E_PRESENT | PT_E_WRITABLE | PT_E_LARGE;
 
 	/* XNU kernel half -> copied KC physical pages (4 KiB pages) */
 	pt->pml4[PML4_KERNEL_INDEX] =
-	    (pa + 3 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
-	pt->pdpt_k[0] = (pa + 4 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+	    pt_page_pa(pa, PT_PDPT_K) | PT_E_PRESENT | PT_E_WRITABLE;
+	pt->pdpt_k[0] = pt_page_pa(pa, PT_PDE_K) | PT_E_PRESENT | PT_E_WRITABLE;
 	for (i = 0; i < k_n_pte; i++)
 		pt->pde_k[i] =
-		    (pa + (7 + i) * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+		    pt_page_pa(pa, PT_PTE_K + i) | PT_E_PRESENT | PT_E_WRITABLE;
 
 	/* ml_static_ptovirt() alias: kernel-half VA == low PA. */
 	for (i = 0; i < (map_top >> PAGE_SHIFT); i++) {
@@ -191,15 +301,8 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 		    (kc_pa + n * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 	}
 
-	/* XNU-visible upcall trampoline and initial stack. */
-	pt->pdpt_k[1] =
-	    (pa + 5 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
-	pt->pde_extra[0] =
-	    (pa + 6 * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
-	pt->pte_extra[0] = tramp_pa | PT_E_PRESENT | PT_E_WRITABLE;
-	for (i = 0; i < stack_pages; i++)
-		pt->pte_extra[1 + i] =
-		    (stack_pa + i * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
+	/* Host pages that are live on both sides of the CR3 switch. */
+	map_host_code(pt, pa, xnu_stack_va, stack_size);
 
 	*out_phys = pa;
 	return 0;
@@ -271,23 +374,10 @@ static u64_t x86_read_cr3(void)
 }
 
 /*
- * XNU calls linux64_hook with an indirect call, but host module text is not
- * mapped by XNU's page tables. Point the hook at a trampoline in shared memory:
- * switch CR3 back to Linux, then jump to the real upcall with rdi/rsi/rdx
- * untouched. The upcall restores the remaining world state on Linux's CR3.
+ * XNU calls linux64_hook with an indirect call. The hook points to module text
+ * that is mapped in both page tables; its first instruction switches CR3 back
+ * to Linux before the rest of the upcall restores the remaining world state.
  */
-static void write_upcall_trampoline(void *dst, u64_t cr3, u64_t upcall)
-{
-	u8 *p = dst;
-
-	*p++ = 0x48; *p++ = 0xb8;              /* movabs $cr3, %rax */
-	memcpy(p, &cr3, sizeof(cr3)); p += sizeof(cr3);
-	*p++ = 0x0f; *p++ = 0x22; *p++ = 0xd8; /* mov %rax, %cr3 */
-	*p++ = 0x49; *p++ = 0xbb;              /* movabs $upcall, %r11 */
-	memcpy(p, &upcall, sizeof(upcall)); p += sizeof(upcall);
-	*p++ = 0x41; *p++ = 0xff; *p++ = 0xe3; /* jmp *%r11 */
-}
-
 static int write_xnu_globals(void)
 {
 	u64_t hook = xnu_upcall_va, slide = xnu_slide;
@@ -349,47 +439,40 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 {
 	struct init_pt pt;
 	u64_t image_size = vmhigh - vmlow;
-	u64_t tramp_off = ALIGN(image_size, PAGE_SIZE);
-	u64_t stack_off = tramp_off + PAGE_SIZE;
 	const u64_t stack_size = 16 << 10;
-	u64_t stack_va, xsave_va, cr3_phys, tramp_pa, stack_pa;
+	u64_t stack_va, stack_top, xsave_va, cr3_phys;
 	u64_t apic;
+	void *stack_host;
 	long r;
 	int cpu, err, i;
 
-	if (stack_off + stack_size > kc_size) {
-		pr_err("xnu86: kernel allocation too small for shared pages\n");
-		return -EINVAL;
-	}
-
 	/*
-	 * The upcall gate and the initial stack live in the spare pages of the
-	 * kernel allocation.  XNU's link-address mapping (vmlow + offset) and
-	 * its ml_static_ptovirt() alias then cover them even after vstart()
-	 * switches to the page tables it builds in Idle_PTs_init().
+	 * The XNU stack is vmalloc-backed: it is mapped into the XNU page
+	 * tables for the downcall, and Linux already maps it when an upcall
+	 * pushes registers before restoring the rest of the world.
 	 */
+	stack_host = vmalloc(stack_size);
+	if (!stack_host) {
+		pr_err("xnu86: cannot allocate XNU stack\n");
+		return -ENOMEM;
+	}
+	memset(stack_host, 0, stack_size);
+	stack_va = (u64_t)(uintptr_t)stack_host;
+	stack_top = stack_va + stack_size - 16;
+
+	/* Module text is mapped in both worlds, so it is a safe hook gate. */
+	xnu_upcall_va = (u64_t)(uintptr_t)xnu_world_hook_trampoline_x86;
+	xnu_host_cr3_x86 = x86_read_cr3();
+
 	memset((char *)mem.kc.va + image_size, 0, kc_size - image_size);
-	mem.tramp.va = (char *)mem.kc.va + tramp_off;
-	mem.tramp.pa = kc_pa + tramp_off;
-	mem.tramp.size = PAGE_SIZE;
-	mem.stack.va = (char *)mem.kc.va + stack_off;
-	mem.stack.pa = kc_pa + stack_off;
-	mem.stack.size = stack_size;
-	tramp_pa = mem.tramp.pa;
-	stack_pa = mem.stack.pa;
-	xnu_upcall_va = vmlow + tramp_off;
-	stack_va = vmlow + stack_off + stack_size - 16;
 
 	err = build_init_pt(&pt, kc_pa, vmlow, vmlow + kc_size, ram_mb << 20,
-	    tramp_pa, stack_pa, stack_size, &cr3_phys);
+	    stack_va, stack_size, &cr3_phys);
 	if (err) {
 		pr_err("xnu86: cannot build initial page tables (%d)\n", err);
+		vfree(stack_host);
 		return err;
 	}
-
-	/* The trampoline switches Linux's CR3 before entering host code. */
-	write_upcall_trampoline(mem.tramp.va, x86_read_cr3(),
-	    (u64_t)(uintptr_t)xnu_world_upcall_x86);
 
 	xsave_va = 0;
 	err = fki_x86_shared_alloc(4096, &mem.xsave);
@@ -402,7 +485,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	nr_cpus = min(nr_cpus, MAX_XNU_CPUS);
 	nr_cpus = min(nr_cpus, fki_x86_num_cpus());
 	for (i = 0; i < nr_cpus; i++)
-		setup_world(&worlds[i], i, cr3_phys, stack_va, xsave_va,
+		setup_world(&worlds[i], i, cr3_phys, stack_top, xsave_va,
 		    mem.xsave.size);
 
 	/* Upcalls rediscover the world from CPUID, not from "CPU 0". */
@@ -418,11 +501,11 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 		goto out_xsave;
 
 	pr_info("xnu86: stack=0x%llx trampoline=0x%llx cr3=0x%llx\n",
-	    (unsigned long long)stack_va,
+	    (unsigned long long)stack_top,
 	    (unsigned long long)xnu_upcall_va,
 	    (unsigned long long)cr3_phys);
 	debugf("run: cr3=0x%llx stack=0x%llx tramp=0x%llx ba=0x%llx\n",
-	    (unsigned long long)cr3_phys, (unsigned long long)stack_va,
+	    (unsigned long long)cr3_phys, (unsigned long long)stack_top,
 	    (unsigned long long)xnu_upcall_va, (unsigned long long)ba_phys);
 	logs("xnu86: entering vstart\n");
 	r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
@@ -432,6 +515,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 out_xsave:
 	fki_x86_shared_free(&mem.xsave);
 	free_init_pt(&pt);
+	vfree(stack_host);
 	return err;
 }
 
