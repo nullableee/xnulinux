@@ -882,9 +882,13 @@ struct x86_thread {
 static int x86_thread_fn(void *data)
 {
 	struct x86_thread *t = data;
+	int ret;
 
-	while (!kthread_should_stop())
-		t->fn(t->arg);
+	while (!kthread_should_stop()) {
+		ret = t->fn(t->arg);
+		if (ret < 0)
+			msleep(100);
+	}
 	return 0;
 }
 
