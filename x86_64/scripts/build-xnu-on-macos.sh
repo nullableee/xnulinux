@@ -116,7 +116,10 @@ MAKE_ENV=(
 
 make -C "$TREE" build "${MAKE_ENV[@]}"
 
-KERN=$(find "$SYMROOT" "$DSTROOT" -type f -name kernel -perm -u+x 2>/dev/null | head -1)
+KERN=$(find "$SYMROOT" "$DSTROOT" -type f \( -name kernel -o -name 'kernel.development' \) -perm -u+x 2>/dev/null | head -1)
+if [ -z "$KERN" ]; then
+	KERN=$(find "$SYMROOT" "$DSTROOT" -type f -name 'kernel.development.unstripped*' -perm -u+x 2>/dev/null | head -1)
+fi
 [ -n "$KERN" ] || { echo "ERROR: built kernel not found" >&2; exit 1; }
 cp "$KERN" "$OUT"
 chmod 644 "$OUT"

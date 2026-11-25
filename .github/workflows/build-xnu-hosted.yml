@@ -86,7 +86,7 @@ jobs:
             # keeps only a limited number of annotations per run.
             {
               grep -A5 -E 'duplicate symbol|Undefined symbols' "$LOG" || true
-              grep -E 'error:|fatal error:|undefined|ld:|make.*Error' "$LOG" | tail -60 || true
+              grep -E 'error:|ERROR:|fatal error:|undefined|not found|ld:|make.*Error' "$LOG" | tail -60 || true
             } | awk '!seen[$0]++' | while IFS= read -r line; do
               line=${line//$'%'/%25}
               line=${line//$'\r'/%0D}
