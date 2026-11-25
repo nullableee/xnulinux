@@ -106,39 +106,53 @@ struct x86_desc_ptr {
 	u64 base;
 } __packed;
 
-static void x86_save_state(struct fki_x86_state *s)
+/*
+ * This runs from the upcall after CR3 is Linux's but before
+ * fki_x86_load_state_asm() restores Linux's GS base and IDT. %gs still holds
+ * XNU's value, so a compiler-generated stack-canary read from %gs would fault
+ * through XNU's IDT. Use raw asm (no paravirt callbacks, no %gs) and opt out
+ * of stack protection.
+ */
+#define FKI_RAW_RDMSR(msr, dst)					\
+	do {								\
+		u32 fki_lo, fki_hi;					\
+		asm volatile("rdmsr" : "=a" (fki_lo), "=d" (fki_hi)	\
+		    : "c" (msr));					\
+		(dst) = ((fki_u64)fki_hi << 32) | fki_lo;		\
+	} while (0)
+
+static void __attribute__((no_stack_protector))
+x86_save_state(struct fki_x86_state *s)
 {
 	struct x86_desc_ptr idt, gdt;
 	u16 tr = 0;
 
-	/* Fine-grained breadcrumbs: the leave path can hang inside this
-	 * routine while CR3 is already Linux's, but before the Linux IDT
-	 * and GS/MSRs have been restored. The logger thread sees these. */
+	/* Fine-grained breadcrumbs: the logger thread sees these. */
 	fki_x86_phase_set(50, (unsigned long)s);
-	s->cr3 = __read_cr3();
+	asm volatile("mov %%cr3, %0" : "=r" (s->cr3));
 	fki_x86_phase_set(51, s->cr3);
-	asm volatile ("sidt %0" : "=m" (idt));
+	asm volatile("sidt %0" : "=m" (idt));
 	fki_x86_phase_set(52, idt.base);
-	asm volatile ("sgdt %0" : "=m" (gdt));
+	asm volatile("sgdt %0" : "=m" (gdt));
 	fki_x86_phase_set(53, gdt.base);
-	asm volatile ("str %0" : "=m" (tr));
+	asm volatile("str %0" : "=m" (tr));
 	fki_x86_phase_set(54, tr);
 	s->idt_base = idt.base;
 	s->idt_limit = idt.limit;
 	s->gdt_base = gdt.base;
 	s->gdt_limit = gdt.limit;
 	s->tr = tr;
-	rdmsrq(MSR_GS_BASE, s->gs_base);
+	FKI_RAW_RDMSR(MSR_GS_BASE, s->gs_base);
 	fki_x86_phase_set(55, s->gs_base);
-	rdmsrq(MSR_KERNEL_GS_BASE, s->kernel_gs_base);
+	FKI_RAW_RDMSR(MSR_KERNEL_GS_BASE, s->kernel_gs_base);
 	fki_x86_phase_set(56, s->kernel_gs_base);
-	rdmsrq(MSR_STAR, s->star);
+	FKI_RAW_RDMSR(MSR_STAR, s->star);
 	fki_x86_phase_set(57, s->star);
-	rdmsrq(MSR_LSTAR, s->lstar);
+	FKI_RAW_RDMSR(MSR_LSTAR, s->lstar);
 	fki_x86_phase_set(58, s->lstar);
-	rdmsrq(MSR_CSTAR, s->cstar);
+	FKI_RAW_RDMSR(MSR_CSTAR, s->cstar);
 	fki_x86_phase_set(59, s->cstar);
-	rdmsrq(MSR_SYSCALL_MASK, s->sfmask);
+	FKI_RAW_RDMSR(MSR_SYSCALL_MASK, s->sfmask);
 	fki_x86_phase_set(60, s->sfmask);
 }
 
