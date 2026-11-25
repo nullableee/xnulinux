@@ -520,8 +520,12 @@ int fki_x86_shared_alloc(unsigned long size, struct fki_region *r)
 	if (!r || !size)
 		return -EINVAL;
 	nr_pages = PFN_UP(size);
+	pr_info("fki-x86: alloc %lu contiguous pages on node %d\n",
+	    nr_pages, numa_node_id());
+	/* alloc_contig_pages() does not accept NUMA_NO_NODE: it indexes
+	 * node_zonelist(nid) directly. */
 	page = alloc_contig_pages_noprof(nr_pages, GFP_KERNEL | __GFP_ZERO,
-	    NUMA_NO_NODE, NULL);
+	    numa_node_id(), NULL);
 	if (!page)
 		return -ENOMEM;
 	r->va = page_address(page);
