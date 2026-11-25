@@ -24,6 +24,7 @@
 #include <linux/vmalloc.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
+#include <linux/random.h>
 
 MODULE_LICENSE("Proprietary");
 MODULE_DESCRIPTION("XNU x86_64 host loader (APSL-2.0)");
@@ -474,31 +475,47 @@ static int build_efi_map(u64_t total, u64_t pa_min)
 /*
  * Minimal flattened device tree for XNU's PE_init_platform().
  *
- * A zero deviceTreeP is not enough: ml_static_ptovirt(0) is still non-NULL, so
- * SecureDTInit() accepts a zero-length tree and pe_init_debug() walks random
- * kernel data as if it were a DT node.  Give it a real one-property root node.
+ * PE_init_platform() needs /chosen:random-seed for early_random_init():
+ * PE_get_random_seed() panics with "no random seed" if the property is
+ * missing. The 64-byte seed matches BOOTLOADER_ENTROPY_REQUEST_SIZE on
+ * x86_64.
  *
  * Layout (pexpert/pexpert/device_tree.h):
  *   DeviceTreeNode { nProperties, nChildren }
  *   DeviceTreeNodeProperty { name[32], length, value[ROUND4(length)] }
  */
-struct linux64_dt_property {
+struct linux64_dt_name_prop {
 	char name[32];
 	u32_t length;
-	unsigned char value[8]; /* "root\0" padded to a 4-byte boundary */
+	unsigned char value[8]; /* "root\0" / "chosen\0", padded to 4 bytes */
 };
 
-struct linux64_dt_node {
+struct linux64_dt_seed_prop {
+	char name[32];
+	u32_t length;
+	unsigned char value[64];
+};
+
+struct linux64_dt_chosen {
 	u32_t n_properties;
 	u32_t n_children;
-	struct linux64_dt_property property[1];
+	struct linux64_dt_name_prop name;
+	struct linux64_dt_seed_prop seed;
 };
 
-#define LINUX64_DT_SIZE sizeof(struct linux64_dt_node)
+struct linux64_dt_root {
+	u32_t n_properties;
+	u32_t n_children;
+	struct linux64_dt_name_prop name;
+	struct linux64_dt_chosen chosen;
+};
+
+#define LINUX64_DT_SIZE sizeof(struct linux64_dt_root)
 
 static int build_device_tree(u64_t pa_min)
 {
-	struct linux64_dt_node *dt;
+	struct linux64_dt_root *dt;
+	struct linux64_dt_chosen *chosen;
 
 	if (shared_alloc_above(pa_min, LINUX64_DT_SIZE,
 	    &mem.dt, &dt_backing))
@@ -506,10 +523,20 @@ static int build_device_tree(u64_t pa_min)
 	dt = mem.dt.va;
 
 	dt->n_properties = 1;
-	dt->n_children = 0;
-	memcpy(dt->property[0].name, "name", sizeof("name"));
-	dt->property[0].length = sizeof("root"); /* includes the NUL */
-	memcpy(dt->property[0].value, "root", sizeof("root"));
+	dt->n_children = 1;
+	memcpy(dt->name.name, "name", sizeof("name"));
+	dt->name.length = sizeof("root"); /* includes the NUL */
+	memcpy(dt->name.value, "root", sizeof("root"));
+
+	chosen = &dt->chosen;
+	chosen->n_properties = 2;
+	chosen->n_children = 0;
+	memcpy(chosen->name.name, "name", sizeof("name"));
+	chosen->name.length = sizeof("chosen");
+	memcpy(chosen->name.value, "chosen", sizeof("chosen"));
+	memcpy(chosen->seed.name, "random-seed", sizeof("random-seed"));
+	chosen->seed.length = sizeof(chosen->seed.value);
+	get_random_bytes(chosen->seed.value, chosen->seed.length);
 
 	return 0;
 }
