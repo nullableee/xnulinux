@@ -66,19 +66,42 @@ static DEFINE_PER_CPU(call_single_data_t, x86_csd);
 #define FKI_X86_CR4_CET		(1UL << FKI_X86_CR4_CET_BIT)
 static DEFINE_PER_CPU(unsigned long, x86_saved_cr4);
 
+/*
+ * native_write_cr4() re-adds "pinned" bits, including CR4.CET on this host:
+ * the previous attempt produced "pinned CR4 bits changed: 0x800000!?" and
+ * CET stayed on.  CR4 is ring-0 writable with MOV, so bypass that policy.
+ */
+static inline unsigned long fki_x86_read_cr4(void)
+{
+	unsigned long val;
+
+	asm volatile ("mov %%cr4, %0" : "=r" (val));
+	return val;
+}
+
+static inline void fki_x86_write_cr4(unsigned long val)
+{
+	asm volatile ("mov %0, %%cr4" : : "r" (val) : "memory");
+}
+
 static inline unsigned long fki_x86_ibt_off(void)
 {
-	unsigned long cr4 = __read_cr4();
+	unsigned long cr4 = fki_x86_read_cr4();
 
 	if (cr4 & FKI_X86_CR4_CET)
-		__write_cr4(cr4 & ~FKI_X86_CR4_CET);
+		fki_x86_write_cr4(cr4 & ~FKI_X86_CR4_CET);
 	return cr4;
 }
 
 static inline void fki_x86_ibt_restore(unsigned long cr4)
 {
-	if ((__read_cr4() & FKI_X86_CR4_CET) != (cr4 & FKI_X86_CR4_CET))
-		__write_cr4(cr4);
+	unsigned long now;
+
+	if (!(cr4 & FKI_X86_CR4_CET))
+		return;
+	now = fki_x86_read_cr4();
+	if (!(now & FKI_X86_CR4_CET))
+		fki_x86_write_cr4(now | FKI_X86_CR4_CET);
 }
 
 struct x86_desc_ptr {
@@ -503,6 +526,8 @@ static int fki_x86_resolve(void)
 		unregister_kprobe(&kp);
 	}
 	cr4 = fki_x86_ibt_off();
+	pr_info("fki-x86: IBT disabled for lookup: cr4 0x%lx -> 0x%lx\n",
+	    cr4, fki_x86_read_cr4());
 	p_set_memory_x = (void *)lookup("set_memory_x");
 	fki_x86_ibt_restore(cr4);
 	if (!p_set_memory_x)
