@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
+#include <linux/stddef.h>
 #include <linux/vmalloc.h>
 
 MODULE_LICENSE("Proprietary");
@@ -48,6 +49,7 @@ static struct xnu_region {
 } mem;
 
 static struct xnu_image_x86 img;
+static struct linux64_host_map host_map_store;
 static u64_t a_vstart, a_hook, a_slide, a_cpu_entry, a_vint, a_ipi;
 static u64_t kc_phys, kc_virt, xnu_slide;
 /* XNU-visible address of the module-text upcall gate. */
@@ -161,6 +163,23 @@ static u64_t *pt_child_table(struct init_pt *pt, u64_t pt_pa, u64_t *parent,
 	return (u64_t *)((char *)pt->region.va + (pa - pt_pa));
 }
 
+static void record_host_map(u64_t va, u64_t pa)
+{
+	unsigned int i;
+
+	if (host_map_store.count >= LINUX64_HOST_MAP_MAX)
+		return;
+	for (i = 0; i < host_map_store.count; i++) {
+		if (host_map_store.va[i] == va) {
+			host_map_store.pa[i] = pa;
+			return;
+		}
+	}
+	host_map_store.va[host_map_store.count] = va;
+	host_map_store.pa[host_map_store.count] = pa;
+	host_map_store.count++;
+}
+
 static void map_host_page(struct init_pt *pt, u64_t pt_pa, unsigned long va)
 {
 	struct page *page = vmalloc_to_page((void *)va);
@@ -192,6 +211,7 @@ static void map_host_page(struct init_pt *pt, u64_t pt_pa, unsigned long va)
 	if (!pte)
 		return;
 	pte[pte_i] = pa | PT_E_PRESENT | PT_E_WRITABLE;
+	record_host_map(va, pa);
 }
 
 static void map_host_range(struct init_pt *pt, u64_t pt_pa,
@@ -220,10 +240,10 @@ static void map_host_code(struct init_pt *pt, u64_t pt_pa,
 	map_host_range(pt, pt_pa, sp - 16 * PAGE_SIZE, sp + 16 * PAGE_SIZE);
 	map_host_range(pt, pt_pa, xnu_stack_va, xnu_stack_va + stack_size);
 	debugf("pt: host sp=0x%lx xnu=0x%lx fki=0x%lx worlds=0x%lx "
-	    "cr3var=0x%lx stack=0x%llx pdpt/pde/pte=%u/%u/%u\n",
+	    "cr3var=0x%lx stack=0x%llx pdpt/pde/pte=%u/%u/%u map=%u\n",
 	    sp, xnu, fki, worlds_va, cr3_va,
 	    (unsigned long long)xnu_stack_va, pt->n_host_pdpt,
-	    pt->n_host_pde, pt->n_host_pte);
+	    pt->n_host_pde, pt->n_host_pte, host_map_store.count);
 }
 
 static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
@@ -466,6 +486,7 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 
 	memset((char *)mem.kc.va + image_size, 0, kc_size - image_size);
 
+	host_map_store.count = 0;
 	err = build_init_pt(&pt, kc_pa, vmlow, vmlow + kc_size, ram_mb << 20,
 	    stack_va, stack_size, &cr3_phys);
 	if (err) {
@@ -473,6 +494,8 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 		vfree(stack_host);
 		return err;
 	}
+	/* Idle_PTs_init() rebuilds page tables; hand it the host mappings. */
+	((struct x86_boot_args *)mem.ba.va)->host_map = host_map_store;
 
 	xsave_va = 0;
 	err = fki_x86_shared_alloc(4096, &mem.xsave);

@@ -65,6 +65,19 @@ struct x86_boot_video {
 	uint64_t v_base_addr;
 };
 
+/*
+ * Host pages that must survive XNU's switch from the booter page tables to
+ * IdlePML4. Stored in the boot_args reserved area; the same layout is declared
+ * in pexpert/pexpert/i386/boot.h by patch 0011.
+ */
+#define LINUX64_HOST_MAP_MAX 128
+struct linux64_host_map {
+	uint32_t count;
+	uint32_t pad;
+	uint64_t va[LINUX64_HOST_MAP_MAX];
+	uint64_t pa[LINUX64_HOST_MAP_MAX];
+};
+
 struct x86_boot_args {
 	uint16_t revision;
 	uint16_t version;
@@ -127,10 +140,15 @@ struct x86_boot_args {
 	uint64_t bs_arv_manifest_start;
 	uint64_t bs_arv_manifest_size;
 
-	uint32_t reserved4[692];
+	union {
+		uint32_t reserved4[692];
+		struct linux64_host_map host_map;
+	};
 };
 
 _Static_assert(sizeof(struct x86_boot_args) == 4096, "x86 boot_args must be 4096 bytes");
+_Static_assert(sizeof(struct linux64_host_map) <= 692 * sizeof(uint32_t),
+    "host map must fit in boot_args reserved area");
 
 int linux64_boot_args_init(struct x86_boot_args *ba,
     uint64_t kernel_pa, uint32_t kernel_size, uint64_t kc_hdrs_vaddr,

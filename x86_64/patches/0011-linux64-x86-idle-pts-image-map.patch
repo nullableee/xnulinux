@@ -32,3 +32,107 @@ index d66e3f8..c978f69 100644
  	/* IdlePTD */
  	fillkpt(IdlePTD,
  	    INTEL_PTE_WRITE, (uintptr_t)ID_MAP_VTOP(KPTphys), 0, NKPT);
+diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
+index d64212f..a668fa1 100644
+--- a/osfmk/i386/i386_init.c
++++ b/osfmk/i386/i386_init.c
+@@ -448,6 +448,60 @@ Idle_PTs_init(void)
+ 	doublemap_init((rand64 >> 8) & 0xFF);
+ 	idt64_remap();
+ 
++	/*
++	 * LINUX64: the world switch, the hook gate and the stacks live in host
++	 * memory.  The booter page tables mapped them; copy those VA->PA entries
++	 * into the tables we are about to switch to so upcalls keep working.
++	 */
++	if (kernelBootArgs != NULL && kernelBootArgs->host_map.count != 0) {
++		unsigned int h, count = kernelBootArgs->host_map.count;
++
++		if (count > LINUX64_HOST_MAP_MAX)
++			count = LINUX64_HOST_MAP_MAX;
++		for (h = 0; h < count; h++) {
++			uint64_t va = kernelBootArgs->host_map.va[h];
++			uint64_t pa = kernelBootArgs->host_map.pa[h];
++			uint64_t pml4_i = (va >> 39) & 0x1ffULL;
++			uint64_t pdpt_i = (va >> 30) & 0x1ffULL;
++			uint64_t pde_i = (va >> 21) & 0x1ffULL;
++			uint64_t pte_i = (va >> 12) & 0x1ffULL;
++			pt_entry_t *pdpt, *pde, *pte;
++			uintptr_t e;
++
++			e = IdlePML4[pml4_i];
++			if (!(e & INTEL_PTE_VALID)) {
++				pdpt = ALLOCPAGES(1);
++				e = (uintptr_t)ID_MAP_VTOP(pdpt) |
++				    INTEL_PTE_WRITE | INTEL_PTE_VALID;
++				IdlePML4[pml4_i] = e;
++			} else {
++				pdpt = (pt_entry_t *)ml_static_ptovirt(pte_to_pa(e));
++			}
++
++			e = pdpt[pdpt_i];
++			if (!(e & INTEL_PTE_VALID)) {
++				pde = ALLOCPAGES(1);
++				e = (uintptr_t)ID_MAP_VTOP(pde) |
++				    INTEL_PTE_WRITE | INTEL_PTE_VALID;
++				pdpt[pdpt_i] = e;
++			} else {
++				pde = (pt_entry_t *)ml_static_ptovirt(pte_to_pa(e));
++			}
++
++			e = pde[pde_i];
++			if (!(e & INTEL_PTE_VALID)) {
++				pte = ALLOCPAGES(1);
++				e = (uintptr_t)ID_MAP_VTOP(pte) |
++				    INTEL_PTE_WRITE | INTEL_PTE_VALID;
++				pde[pde_i] = e;
++			} else {
++				pte = (pt_entry_t *)ml_static_ptovirt(pte_to_pa(e));
++			}
++
++			pte[pte_i] = (uintptr_t)pa | INTEL_PTE_WRITE | INTEL_PTE_VALID;
++		}
++	}
++
+ 	postcode(VSTART_SET_CR3);
+ 
+ 	/*
+diff --git a/pexpert/pexpert/i386/boot.h b/pexpert/pexpert/i386/boot.h
+index 7486640..b0c40b4 100644
+--- a/pexpert/pexpert/i386/boot.h
++++ b/pexpert/pexpert/i386/boot.h
+@@ -147,6 +147,19 @@ typedef struct boot_icon_element boot_icon_element;
+ #define kBootArgsFlagInstallUI          (1 << 8)
+ #define kBootArgsFlagRecoveryBoot       (1 << 10)
+ 
++/*
++ * LINUX64: host pages that must remain mapped after Idle_PTs_init() switches
++ * away from the booter's page tables. Written by the host loader into the
++ * reserved area of boot_args; the layout matches x86_64/include/boot_args_x86_64.h.
++ */
++#define LINUX64_HOST_MAP_MAX 128
++typedef struct linux64_host_map {
++	uint32_t    count;
++	uint32_t    pad;
++	uint64_t    va[LINUX64_HOST_MAP_MAX];
++	uint64_t    pa[LINUX64_HOST_MAP_MAX];
++} linux64_host_map_t;
++
+ typedef struct boot_args {
+ 	uint16_t    Revision;   /* Revision of boot_args structure */
+ 	uint16_t    Version;    /* Version of boot_args structure */
+@@ -215,9 +228,13 @@ typedef struct boot_args {
+ 	uint64_t    bsARVManifestSize;
+ 
+ 	/* Reserved */
+-	uint32_t    __reserved4[692];
++	union {
++		uint32_t            __reserved4[692];
++		linux64_host_map_t  host_map;
++	};
+ } boot_args;
+ 
+ extern char assert_boot_args_size_is_4096[sizeof(boot_args) == 4096 ? 1 : -1];
++extern char assert_linux64_host_map_fits[sizeof(linux64_host_map_t) <= sizeof(((boot_args *)0)->__reserved4) ? 1 : -1];
+ 
+ #endif /* _PEXPERT_I386_BOOT_H */
