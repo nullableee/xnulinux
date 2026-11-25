@@ -455,6 +455,11 @@ volatile unsigned long fki_x86_phase_arg;
 EXPORT_SYMBOL(fki_x86_phase);
 EXPORT_SYMBOL(fki_x86_phase_arg);
 
+/* From xnu_hook_x86.c: upcalls are counted even when their log lines are
+ * rate-limited, so a stable phase can be told apart from a long XNU run. */
+extern unsigned long xnu_upcall_count;
+extern unsigned long xnu_upcall_last;
+
 void fki_x86_phase_set(unsigned long phase, unsigned long arg)
 {
 	fki_x86_phase_arg = arg;
@@ -517,9 +522,12 @@ static int fki_phase_logger(void *unused)
 		 * long run, the phase stops changing and a change-only logger
 		 * would leave no trace at all. */
 		if (p != last || ++tick >= 20) {
-			char buf[160];
-			int n = snprintf(buf, sizeof(buf), "phase: %lu %s arg=0x%lx\n",
-			    p, fki_phase_name(p), READ_ONCE(fki_x86_phase_arg));
+			char buf[224];
+			int n = snprintf(buf, sizeof(buf),
+			    "phase: %lu %s arg=0x%lx upcalls=%lu last=0x%lx\n",
+			    p, fki_phase_name(p), READ_ONCE(fki_x86_phase_arg),
+			    READ_ONCE(xnu_upcall_count),
+			    READ_ONCE(xnu_upcall_last));
 
 			if (n > 0)
 				fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));

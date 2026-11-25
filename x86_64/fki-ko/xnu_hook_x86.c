@@ -36,6 +36,10 @@ static unsigned long n_fault, n_user_enter, n_panic, n_assert;
 static unsigned long last_kprintf_log;
 static xnu_hook_translate_fn hook_translate;
 
+/* Seen by the phase logger even when KPRINTF lines are rate-limited. */
+unsigned long xnu_upcall_count;
+unsigned long xnu_upcall_last;
+
 /*
  * The upcall switches to Linux's CR3 before running here. Any argument that
  * points into XNU's address space must be translated to the host alias first.
@@ -70,6 +74,9 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	char buf[160];
 	int n;
 	int log_upcall = 1;
+
+	xnu_upcall_last = call;
+	xnu_upcall_count++;
 
 	if (call == LINUX64_CALL_KPRINTF) {
 		if (time_before(jiffies, last_kprintf_log + KPRINTF_LOG_INTERVAL))

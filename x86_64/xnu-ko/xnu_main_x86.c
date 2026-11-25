@@ -22,6 +22,8 @@
 #include <linux/smp.h>
 #include <linux/stddef.h>
 #include <linux/vmalloc.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
 
 MODULE_LICENSE("Proprietary");
 MODULE_DESCRIPTION("XNU x86_64 host loader (APSL-2.0)");
@@ -64,6 +66,12 @@ static char *cmdline_copy;
 static int stop_run;
 module_param(stop_run, int, 0644);
 
+/* Host-side window into XNU's stack, used by the watchdog below. */
+static void *xnu_stack_host;
+static u64_t xnu_stack_top;
+static volatile int xnu_run_active;
+static struct task_struct *xnu_stack_thread;
+
 static void logs(const char *s)
 {
 	fki_log(s, strlen(s));
@@ -81,6 +89,35 @@ static void debugf(const char *fmt, ...)
 	va_end(ap);
 	if (n > 0)
 		fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+}
+
+/*
+ * XNU runs with interrupts and preemption disabled on its CPU, so the normal
+ * phase breadcrumbs go quiet if it wedges. This watchdog runs on another CPU
+ * and dumps the top of XNU's stack once a second. The addresses can be mapped
+ * back to symbols offline from the same firmware image.
+ */
+static int xnu_stack_watchdog(void *unused)
+{
+	while (!kthread_should_stop()) {
+		if (READ_ONCE(xnu_run_active) && xnu_stack_host &&
+		    xnu_stack_top) {
+			char buf[768];
+			u64_t *words = (u64_t *)(xnu_stack_top - 256);
+			int n, i;
+
+			n = snprintf(buf, sizeof(buf), "xnu stack top=0x%llx:",
+			    (unsigned long long)xnu_stack_top);
+			for (i = 0; i < 32 && n < (int)sizeof(buf) - 32; i++)
+				n += snprintf(buf + n, sizeof(buf) - n,
+				    " %016llx",
+				    (unsigned long long)READ_ONCE(words[i]));
+			if (n > 0)
+				logs(buf);
+		}
+		msleep_interruptible(1000);
+	}
+	return 0;
 }
 
 /* ---- initial page tables -------------------------------------------------- */
@@ -534,6 +571,12 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	stack_va = (u64_t)(uintptr_t)stack_host;
 	stack_top = stack_va + stack_size - 16;
 
+	xnu_stack_host = stack_host;
+	xnu_stack_top = stack_top;
+	xnu_stack_thread = kthread_run(xnu_stack_watchdog, NULL, "xnu-stack");
+	if (IS_ERR(xnu_stack_thread))
+		xnu_stack_thread = NULL;
+
 	/* Module text is mapped in both worlds, so it is a safe hook gate. */
 	xnu_upcall_va = (u64_t)(uintptr_t)xnu_world_hook_trampoline_x86;
 	xnu_host_cr3_x86 = x86_read_cr3();
@@ -545,6 +588,12 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	    stack_va, stack_size, &cr3_phys);
 	if (err) {
 		pr_err("xnu86: cannot build initial page tables (%d)\n", err);
+		if (xnu_stack_thread) {
+			kthread_stop(xnu_stack_thread);
+			xnu_stack_thread = NULL;
+		}
+		xnu_stack_host = NULL;
+		xnu_stack_top = 0;
 		vfree(stack_host);
 		return err;
 	}
@@ -600,11 +649,19 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	    (unsigned long long)cr3_phys, (unsigned long long)stack_top,
 	    (unsigned long long)xnu_upcall_va, (unsigned long long)ba_phys);
 	logs("xnu86: entering vstart\n");
+	WRITE_ONCE(xnu_run_active, 1);
 	r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
+	WRITE_ONCE(xnu_run_active, 0);
 	pr_info("xnu86: vstart returned %ld\n", r);
 	debugf("run: vstart returned %ld\n", r);
 
 out_xsave:
+	if (xnu_stack_thread) {
+		kthread_stop(xnu_stack_thread);
+		xnu_stack_thread = NULL;
+	}
+	xnu_stack_host = NULL;
+	xnu_stack_top = 0;
 	fki_x86_shared_free(&mem.linux_xsave);
 	fki_x86_shared_free(&mem.xsave);
 	free_init_pt(&pt);
