@@ -1,0 +1,65 @@
+diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
+index d66e3f8..ad38b7a 100644
+--- a/osfmk/i386/i386_init.c
++++ b/osfmk/i386/i386_init.c
+@@ -699,6 +699,10 @@ vstart(vm_offset_t boot_args_start)
+ 	uint64_t        gsbase;
+ #endif
+ 
++	if (linux64_hook) {
++		linux64_call2(LINUX64_CALL_KPRINTF,
++		    (unsigned long)"xnu: vstart entry\n", 0);
++	}
+ 
+ 	postcode(VSTART_ENTRY);
+ 
+@@ -742,6 +746,10 @@ vstart(vm_offset_t boot_args_start)
+ 
+ 		if (kernelBootArgs->Version >= 2 && kernelBootArgs->Revision >= 1 &&
+ 		    kernelBootArgs->KC_hdrs_vaddr != 0) {
++			if (linux64_hook) {
++				linux64_call2(LINUX64_CALL_KPRINTF,
++				    (unsigned long)"xnu: slide kc hdrs\n", 0);
++			}
+ 			/*
+ 			 * slide the header addresses in all mach-o segments and sections, and
+ 			 * perform any new-style chained-fixup sliding for kexts, as necessary.
+@@ -749,6 +757,10 @@ vstart(vm_offset_t boot_args_start)
+ 			 * that correspond to the kexts present in the primary KC, into slid addresses.
+ 			 */
+ 			i386_slide_and_rebase_image((uintptr_t)ml_static_ptovirt(kernelBootArgs->KC_hdrs_vaddr));
++			if (linux64_hook) {
++				linux64_call2(LINUX64_CALL_KPRINTF,
++				    (unsigned long)"xnu: slide done\n", 0);
++			}
+ 		}
+ 
+ 		/*
+@@ -766,11 +778,27 @@ vstart(vm_offset_t boot_args_start)
+ 		kasan_reserve_memory(kernelBootArgs);
+ #endif
+ 
++		if (linux64_hook) {
++			linux64_call2(LINUX64_CALL_KPRINTF,
++			    (unsigned long)"xnu: PE_init_platform\n", 0);
++		}
+ 		PE_init_platform(FALSE, kernelBootArgs);
+ 		postcode(PE_INIT_PLATFORM_D);
++		if (linux64_hook) {
++			linux64_call2(LINUX64_CALL_KPRINTF,
++			    (unsigned long)"xnu: PE_init_platform done\n", 0);
++		}
+ 
++		if (linux64_hook) {
++			linux64_call2(LINUX64_CALL_KPRINTF,
++			    (unsigned long)"xnu: Idle_PTs_init\n", 0);
++		}
+ 		Idle_PTs_init();
+ 		postcode(VSTART_IDLE_PTS_INIT);
++		if (linux64_hook) {
++			linux64_call2(LINUX64_CALL_KPRINTF,
++			    (unsigned long)"xnu: Idle_PTs_init done\n", 0);
++		}
+ 
+ #if KASAN
+ 		/* Init kasan and map whatever was stolen from physfree */

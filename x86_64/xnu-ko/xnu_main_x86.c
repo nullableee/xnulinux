@@ -50,6 +50,8 @@ static struct xnu_region {
 static struct xnu_image_x86 img;
 static u64_t a_vstart, a_hook, a_slide, a_cpu_entry, a_vint, a_ipi;
 static u64_t kc_phys, kc_virt, xnu_slide;
+/* XNU-visible addresses of the shared upcall gate and the initial stack. */
+static u64_t xnu_upcall_va;
 static char *cmdline_copy;
 static int stop_run;
 module_param(stop_run, int, 0644);
@@ -94,8 +96,6 @@ static void debugf(const char *fmt, ...)
  * The trampoline and the initial XNU stack live in one 2 MiB PDE.
  */
 #define XNU_EXTRA_VA      0xffffff8040000000ULL
-#define XNU_UPCALL_VA     XNU_EXTRA_VA
-#define XNU_STACK_VA      (XNU_EXTRA_VA + PAGE_SIZE)
 
 struct init_pt {
 	u64_t *pml4;
@@ -252,7 +252,7 @@ static int build_efi_map(u64_t total)
 
 static void *xnu_va_to_host(u64_t va)
 {
-	if (va < img.vmlow || va >= img.vmhigh)
+	if (va < img.vmlow || va >= img.vmlow + mem.kc.size)
 		return NULL;
 	return (void *)((char *)mem.kc.va + (va - img.vmlow));
 }
@@ -290,7 +290,7 @@ static void write_upcall_trampoline(void *dst, u64_t cr3, u64_t upcall)
 
 static int write_xnu_globals(void)
 {
-	u64_t hook = XNU_UPCALL_VA, slide = xnu_slide;
+	u64_t hook = xnu_upcall_va, slide = xnu_slide;
 	void *hook_va, *slide_va;
 
 	if (!a_hook)
@@ -344,32 +344,47 @@ static int setup_world(struct xnu_world_x86 *w, int cpu, u64_t cr3_phys,
 
 /* ---- run ------------------------------------------------------------------ */
 
-static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
+static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
+    u64_t ba_phys)
 {
 	struct init_pt pt;
-	u64_t stack_va, xsave_va, cr3_phys;
+	u64_t image_size = vmhigh - vmlow;
+	u64_t tramp_off = ALIGN(image_size, PAGE_SIZE);
+	u64_t stack_off = tramp_off + PAGE_SIZE;
+	const u64_t stack_size = 16 << 10;
+	u64_t stack_va, xsave_va, cr3_phys, tramp_pa, stack_pa;
 	u64_t apic;
 	long r;
 	int cpu, err, i;
 
-	err = fki_x86_shared_alloc(16 << 10, &mem.stack);
-	if (err) {
-		pr_err("xnu86: cannot allocate XNU stack (%d)\n", err);
-		return err;
-	}
-	stack_va = XNU_STACK_VA + mem.stack.size - 16;
-
-	err = fki_x86_shared_alloc(PAGE_SIZE, &mem.tramp);
-	if (err) {
-		pr_err("xnu86: cannot allocate upcall trampoline (%d)\n", err);
-		goto out_stack;
+	if (stack_off + stack_size > kc_size) {
+		pr_err("xnu86: kernel allocation too small for shared pages\n");
+		return -EINVAL;
 	}
 
-	err = build_init_pt(&pt, kc_pa, vmlow, vmhigh, ram_mb << 20,
-	    mem.tramp.pa, mem.stack.pa, mem.stack.size, &cr3_phys);
+	/*
+	 * The upcall gate and the initial stack live in the spare pages of the
+	 * kernel allocation.  XNU's link-address mapping (vmlow + offset) and
+	 * its ml_static_ptovirt() alias then cover them even after vstart()
+	 * switches to the page tables it builds in Idle_PTs_init().
+	 */
+	memset((char *)mem.kc.va + image_size, 0, kc_size - image_size);
+	mem.tramp.va = (char *)mem.kc.va + tramp_off;
+	mem.tramp.pa = kc_pa + tramp_off;
+	mem.tramp.size = PAGE_SIZE;
+	mem.stack.va = (char *)mem.kc.va + stack_off;
+	mem.stack.pa = kc_pa + stack_off;
+	mem.stack.size = stack_size;
+	tramp_pa = mem.tramp.pa;
+	stack_pa = mem.stack.pa;
+	xnu_upcall_va = vmlow + tramp_off;
+	stack_va = vmlow + stack_off + stack_size - 16;
+
+	err = build_init_pt(&pt, kc_pa, vmlow, vmlow + kc_size, ram_mb << 20,
+	    tramp_pa, stack_pa, stack_size, &cr3_phys);
 	if (err) {
 		pr_err("xnu86: cannot build initial page tables (%d)\n", err);
-		goto out_tramp;
+		return err;
 	}
 
 	/* The trampoline switches Linux's CR3 before entering host code. */
@@ -404,11 +419,11 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 
 	pr_info("xnu86: stack=0x%llx trampoline=0x%llx cr3=0x%llx\n",
 	    (unsigned long long)stack_va,
-	    (unsigned long long)XNU_UPCALL_VA,
+	    (unsigned long long)xnu_upcall_va,
 	    (unsigned long long)cr3_phys);
 	debugf("run: cr3=0x%llx stack=0x%llx tramp=0x%llx ba=0x%llx\n",
 	    (unsigned long long)cr3_phys, (unsigned long long)stack_va,
-	    (unsigned long long)XNU_UPCALL_VA, (unsigned long long)ba_phys);
+	    (unsigned long long)xnu_upcall_va, (unsigned long long)ba_phys);
 	logs("xnu86: entering vstart\n");
 	r = xnu_world_call_x86(&worlds[0], a_vstart, ba_phys);
 	pr_info("xnu86: vstart returned %ld\n", r);
@@ -417,10 +432,6 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t ba_phys)
 out_xsave:
 	fki_x86_shared_free(&mem.xsave);
 	free_init_pt(&pt);
-out_tramp:
-	fki_x86_shared_free(&mem.tramp);
-out_stack:
-	fki_x86_shared_free(&mem.stack);
 	return err;
 }
 
@@ -517,9 +528,14 @@ static int __init xnu_x86_init(void)
 	}
 	build_efi_map(total);
 
+	/*
+	 * KC_hdrs_vaddr is passed through ml_static_ptovirt() by vstart(), so it
+	 * must be a physical address.  Our image is copied unslid at vmlow.
+	 */
 	err = linux64_boot_args_init(ba, kc_phys, img.vmhigh - img.vmlow,
-	    img.text_vmaddr, cmdline_copy, (u32_t)efi_region.pa, efi_map,
-	    efi_count, sizeof(efi_map[0]), total, 0, 0);
+	    kc_phys + (img.text_vmaddr - img.vmlow), cmdline_copy,
+	    (u32_t)efi_region.pa, efi_map, efi_count, sizeof(efi_map[0]),
+	    total, 0, 0);
 	if (err) {
 		pr_err("xnu86: boot_args init failed (%d)\n", err);
 		kfree(cmdline_copy);
@@ -534,7 +550,7 @@ static int __init xnu_x86_init(void)
 	debugf("loader: boot_args pa=0x%llx efi pa=0x%llx\n",
 	    (unsigned long long)ba_phys, (unsigned long long)efi_region.pa);
 
-	run_xnu(kc_phys, img.vmlow, img.vmhigh, ba_phys);
+	run_xnu(kc_phys, img.vmlow, img.vmhigh, mem.kc.size, ba_phys);
 
 	kfree(cmdline_copy);
 	kfree(ba);

@@ -1,0 +1,34 @@
+diff --git a/osfmk/i386/i386_init.c b/osfmk/i386/i386_init.c
+index d66e3f8..c978f69 100644
+--- a/osfmk/i386/i386_init.c
++++ b/osfmk/i386/i386_init.c
+@@ -400,6 +400,29 @@ Idle_PTs_init(void)
+ 	fillkpt(KPTphys,
+ 	    INTEL_PTE_WRITE, 0, 0, (int)(((uintptr_t)physfree) >> PAGE_SHIFT));
+ 
++	/*
++	 * Hosted boot: the kernel collection is copied to kernelBootArgs->kaddr,
++	 * which is not the physical address that corresponds to its link-time
++	 * virtual address.  The identity map above is still required for
++	 * ml_static_ptovirt(), but the pages covering the linked image must hit
++	 * the copied image after we switch away from the booter's page tables.
++	 * On a normal boot kaddr matches the link address and this is a no-op.
++	 */
++	if (kernelBootArgs != NULL && kernelBootArgs->kaddr != 0) {
++		uintptr_t kva = (uintptr_t)&_mh_execute_header;
++		uintptr_t kpa = kernelBootArgs->kaddr;
++		unsigned int n, npages = kernelBootArgs->ksize >> PAGE_SHIFT;
++
++		for (n = 0; n < npages; n++) {
++			unsigned long pte_index =
++			    (kva + n * PAGE_SIZE - KERNEL_BASE) >> PAGE_SHIFT;
++
++			KPTphys[pte_index] =
++			    (kpa + n * PAGE_SIZE) | INTEL_PTE_WRITE |
++			    INTEL_PTE_VALID;
++		}
++	}
++
+ 	/* IdlePTD */
+ 	fillkpt(IdlePTD,
+ 	    INTEL_PTE_WRITE, (uintptr_t)ID_MAP_VTOP(KPTphys), 0, NKPT);
