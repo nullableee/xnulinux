@@ -28,7 +28,6 @@
 #include <linux/kallsyms.h>
 #include <linux/kprobes.h>
 #include <linux/mm.h>
-#include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/preempt.h>
 #include <linux/printk.h>
@@ -48,6 +47,39 @@
 static const volatile unsigned int *x86_wake_word[NR_CPUS];
 static struct completion x86_wake[NR_CPUS];
 static DEFINE_PER_CPU(call_single_data_t, x86_csd);
+
+/*
+ * CET/IBT is a problem in both directions on current x86_64 Linux:
+ *
+ *  - objtool "seals" unexported functions by replacing their ENDBR64 with
+ *    the 0f 1f 40 d6 poison NOP. is_endbr() still recognises that, so
+ *    register_kprobe() moves kp.addr past it, but the poison is not a legal
+ *    indirect-branch target: calling either address raises #CP.
+ *  - the XNU image is not built with -fcf-protection; _vstart begins with
+ *    "push %rbp", so the downcall's `call *%rax' would raise #CP too.
+ *
+ * CR4.CET is per-CPU and ring-0 writable. Drop it only for the indirect
+ * calls and while the XNU world owns the CPU; Linux's CET is restored on
+ * every upcall/leave.
+ */
+#define FKI_X86_CR4_CET_BIT	23
+#define FKI_X86_CR4_CET		(1UL << FKI_X86_CR4_CET_BIT)
+static DEFINE_PER_CPU(unsigned long, x86_saved_cr4);
+
+static inline unsigned long fki_x86_ibt_off(void)
+{
+	unsigned long cr4 = __read_cr4();
+
+	if (cr4 & FKI_X86_CR4_CET)
+		__write_cr4(cr4 & ~FKI_X86_CR4_CET);
+	return cr4;
+}
+
+static inline void fki_x86_ibt_restore(unsigned long cr4)
+{
+	if ((__read_cr4() & FKI_X86_CR4_CET) != (cr4 & FKI_X86_CR4_CET))
+		__write_cr4(cr4);
+}
 
 struct x86_desc_ptr {
 	u16 limit;
@@ -123,11 +155,13 @@ unsigned long fki_x86_enter(const struct fki_x86_state *foreign,
 	preempt_disable();
 	local_irq_save(flags);
 	x86_save_state(saved);
-	if (foreign->xsave_va && foreign->xsave_size) {
-		if (saved->xsave_va && saved->xsave_size)
-			x86_xsave((void *)saved->xsave_va);
+	/* Save Linux's FPU/CET state before disabling CET. */
+	if (foreign->xsave_va && foreign->xsave_size && saved->xsave_va &&
+	    saved->xsave_size)
+		x86_xsave((void *)saved->xsave_va);
+	this_cpu_write(x86_saved_cr4, fki_x86_ibt_off());
+	if (foreign->xsave_va && foreign->xsave_size)
 		x86_xrstor((const void *)foreign->xsave_va);
-	}
 	x86_load_state(foreign);
 	return flags;
 }
@@ -145,6 +179,7 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 	x86_load_state(saved);
 	if (saved->xsave_va && saved->xsave_size)
 		x86_xrstor((const void *)saved->xsave_va);
+	fki_x86_ibt_restore(this_cpu_read(x86_saved_cr4));
 	local_irq_restore(cookie);
 	preempt_enable();
 }
@@ -452,29 +487,24 @@ static int fki_x86_resolve(void)
 {
 	static unsigned long (*lookup)(const char *);
 	struct kprobe kp = { .symbol_name = "kallsyms_lookup_name" };
-	u32 insn;
-	unsigned long addr;
+	unsigned long cr4;
 
 	if (p_set_memory_x)
 		return 0;
 	if (!lookup) {
 		if (register_kprobe(&kp))
 			return -ENOENT;
-		addr = (unsigned long)kp.addr;
-		unregister_kprobe(&kp);
 		/*
-		 * With IBT enabled, arch_adjust_kprobe_addr() moves kp.addr
-		 * past the function's ENDBR64 so that int3 can be planted
-		 * there.  That address is not a legal indirect-branch target:
-		 * calling it raises #CP ("Missing ENDBR").  Step back over the
-		 * ENDBR64 before calling, but only when it is really there.
+		 * arch_adjust_kprobe_addr() skips ENDBR64 (or its sealed NOP
+		 * poison) at the function entry.  That address cannot be
+		 * called with IBT on, so use it only with CR4.CET cleared.
 		 */
-		if (!copy_from_kernel_nofault(&insn, (void *)(addr - 4),
-		    sizeof(insn)) && insn == 0xfa1e0ff3U)
-			addr -= 4;
-		lookup = (void *)addr;
+		lookup = (void *)kp.addr;
+		unregister_kprobe(&kp);
 	}
+	cr4 = fki_x86_ibt_off();
 	p_set_memory_x = (void *)lookup("set_memory_x");
+	fki_x86_ibt_restore(cr4);
 	if (!p_set_memory_x)
 		return -ENOENT;
 	pr_info("fki-x86: set_memory_x=%pS via kallsyms_lookup_name=%pS\n",
@@ -486,7 +516,8 @@ int fki_x86_shared_alloc(unsigned long size, struct fki_region *r)
 {
 	dma_addr_t pa;
 	void *va;
-	int err;
+	unsigned long cr4;
+	int err, ret;
 
 	if (!r || !size)
 		return -EINVAL;
@@ -496,7 +527,10 @@ int fki_x86_shared_alloc(unsigned long size, struct fki_region *r)
 	va = dma_alloc_coherent(NULL, PAGE_ALIGN(size), &pa, GFP_KERNEL);
 	if (!va)
 		return -ENOMEM;
-	if (p_set_memory_x((unsigned long)va, PFN_UP(size))) {
+	cr4 = fki_x86_ibt_off();
+	ret = p_set_memory_x((unsigned long)va, PFN_UP(size));
+	fki_x86_ibt_restore(cr4);
+	if (ret) {
 		dma_free_coherent(NULL, PAGE_ALIGN(size), va, pa);
 		return -EPERM;
 	}
