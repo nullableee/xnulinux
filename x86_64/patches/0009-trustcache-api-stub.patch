@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000009 Mon Sep 17 00:00:00 2001
+From: xnulinux <xnulinux@local>
+Date: Wed, 25 Nov 2026 00:00:00 +0000
+Subject: [PATCH] LINUX64: add minimal TrustCache API stub for hosted build
+
+XNU 12377.121.6 includes <TrustCache/API.h> from several files, but the
+header is not present in the public source distribution or the macOS SDK
+used by the GitHub Actions runner. The hosted XNU port does not use the
+trust cache runtime; provide the minimal type definitions needed to
+compile the affected translation units.
+
+---
+ EXTERNAL_HEADERS/TrustCache/API.h | 64 ++++++++++++++++++++++++++++++
+ 1 file changed, 64 insertions(+)
+ create mode 100644 EXTERNAL_HEADERS/TrustCache/API.h
+
+diff --git a/EXTERNAL_HEADERS/TrustCache/API.h b/EXTERNAL_HEADERS/TrustCache/API.h
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/EXTERNAL_HEADERS/TrustCache/API.h
+@@ -0,0 +1,64 @@
++/* SPDX-License-Identifier: APSL-2.0 */
++/*
++ * Minimal TrustCache API stub for the hosted x86_64 XNU build.
++ * The real header ships with Apple internal SDKs; the public XNU sources
++ * and macOS SDK used in CI do not include it. Only the types referenced by
++ * the compiled translation units are defined here.
++ */
++#ifndef _TRUSTCACHE_API_H_
++#define _TRUSTCACHE_API_H_
++
++#include <stdint.h>
++#include <stddef.h>
++#include <stdbool.h>
++
++#ifndef kTCEntryHashSize
++#define kTCEntryHashSize 20
++#endif
++#ifndef kUUIDSize
++#define kUUIDSize 16
++#endif
++
++typedef enum {
++	kTCReturnSuccess = 0,
++	kTCReturnError = 1,
++	kTCReturnNotFound = 2,
++	kTCReturnDuplicate = 3,
++} TCReturnError_t;
++
++typedef struct {
++	uint8_t component;
++	uint8_t error;
++	uint16_t uniqueError;
++} TCReturn_t;
++
++typedef enum {
++	kTCTypeInvalid = 0,
++	kTCTypeStatic = 1,
++	kTCTypeEngineering = 2,
++	kTCTypeDTRS = 3,
++	kTCTypeLTRS = 4,
++	kTCTypeCryptex1BootOS = 5,
++	kTCTypeCryptex1BootApp = 6,
++	kTCTypeCryptex1Boot = 7,
++	kTCTypeLegacy = 8,
++	kTCTypeTotal = 9,
++} TCType_t;
++
++typedef enum {
++	kTCQueryTypeAll = 0,
++	kTCQueryTypeTotal = 1,
++} TCQueryType_t;
++
++typedef uint64_t TCCapabilities_t;
++#define kTCCapabilityNone ((TCCapabilities_t)0)
++
++typedef struct _TrustCache {
++	uint32_t version;
++	uint32_t _pad;
++} TrustCache_t;
++
++typedef struct {
++	const TrustCache_t *trustCache;
++	const void *trustCacheEntry;
++} TrustCacheQueryToken_t;
++
++typedef struct _TrustCacheRuntime TrustCacheRuntime_t;
++typedef struct _TrustCacheMutableRuntime TrustCacheMutableRuntime_t;
++
++#endif /* _TRUSTCACHE_API_H_ */

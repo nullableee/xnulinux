@@ -32,81 +32,6 @@ index 357d9e3..bbf6b7f 100644
  	thread_exception_return();
  	/* NOTREACHED */
  }
-diff --git a/osfmk/i386/linux64_x86.c b/osfmk/i386/linux64_x86.c
-index 15fb4d8..c6b177c 100644
---- a/osfmk/i386/linux64_x86.c
-+++ b/osfmk/i386/linux64_x86.c
-@@ -10,5 +10,6 @@
- #include <linux64/linux64_x86_64.h>
- #include <i386/cpu_data.h>
- #include <i386/mp.h>
-+#include <i386/mp_desc.h>
- #include <i386/proc_reg.h>
- #include <kern/debug.h>
-@@ -104,23 +105,57 @@ linux64_x86_timer(void)
- 	rtclock_intr(FALSE);
- }
- 
-+static void
-+linux64_fault_report(struct linux64_x86_fault *fault, int from_user)
-+{
-+	if (!linux64_hook || fault == NULL) {
-+		return;
-+	}
-+	linux64_count(from_user ? LINUX64_CTR_USER_EXC : LINUX64_CTR_BAD_VECTOR);
-+	/*
-+	 * linux64_hook is xnu_world_upcall_x86(): it rediscovers this CPU's world
-+	 * from CPUID, switches to Linux's CR3/IDT/stack and calls xnu_hook_x86().
-+	 * The host returns nonzero for an unhandled fault, which ends the run.
-+	 */
-+	linux64_call(LINUX64_CALL_FAULT, fault);
-+}
-+
- void
- linux64_kernel_fault(struct linux64_x86_fault *fault)
- {
--	linux64_call(LINUX64_CALL_FAULT, fault);
-+	linux64_fault_report(fault, 0);
-+}
-+
-+void
-+linux64_user_fault(struct linux64_x86_fault *fault)
-+{
-+	linux64_fault_report(fault, 1);
-+}
-+
-+void
-+linux64_user_enter(unsigned long rip)
-+{
-+	if (linux64_hook) {
-+		linux64_call2(LINUX64_CALL_USER_ENTER, rip, 0);
-+	}
- }
- 
- /*
-  * Where a secondary CPU starts (LINUX64_CALL_CPU_START), on that CPU's host
-- * thread and in its own world. linux64_hook's caller has already installed
-- * this CPU's GS base and kernel stack. TODO(stage 3): call i386_init_slave()
-- * once cpu_desc_load()/GS is wired to the per-CPU world.
-+ * thread and in its own world. The host passes this CPU's cpu_data_t; loading
-+ * its descriptors installs the GS base that XNU's AP startup code expects, and
-+ * i386_init_slave() continues through secondary_cpu_main() like a real SMP boot.
-  */
- void
- linux64_cpu_entry(void *cpu_data_ptr)
- {
--	(void)cpu_data_ptr;
--	panic("linux64_cpu_entry: secondary CPU startup not ported yet");
-+	cpu_data_t *cdp = (cpu_data_t *)cpu_data_ptr;
-+
-+	if (cdp == NULL) {
-+		panic("linux64_cpu_entry: no cpu_data_t");
-+	}
-+	cpu_desc_load(cdp);
-+	i386_init_slave();		/* never returns */
- }
- 
- /* TODO(stage 4): restore an x86_THREAD_STATE64 and enter ring 3. */
 diff --git a/osfmk/i386/trap.c b/osfmk/i386/trap.c
 index f0f332c..90d3f33 100644
 --- a/osfmk/i386/trap.c
@@ -185,3 +110,39 @@ index f0f332c..90d3f33 100644
  	}
  
  #if DEVELOPMENT || DEBUG
+diff --git a/osfmk/i386/linux64_x86.c b/osfmk/i386/linux64_x86.c
+index 0000000..1111111 100644
+--- a/osfmk/i386/linux64_x86.c	2026-11-25 04:39:02.839228986 +0000
++++ b/osfmk/i386/linux64_x86.c	2026-11-25 04:41:36.337465693 +0000
+@@ -10,10 +10,12 @@
+ #include <linux64/linux64_x86_64.h>
+ #include <i386/cpu_data.h>
+ #include <i386/lapic.h>
++#include <i386/lapic.h>
+ #include <i386/mp.h>
+ #include <i386/proc_reg.h>
+ #include <kern/debug.h>
+ #include <machine/machine_cpu.h>
++#include <machine/machine_cpu.h>
+ #include <pexpert/pexpert.h>
+ 
+ /* Set by xnu.ko before vstart()/i386_init(). */
+@@ -120,10 +122,15 @@
+  * once cpu_desc_load()/GS is wired to the per-CPU world.
+  */
+ void
+-linux64_cpu_entry(void *arg)
++linux64_cpu_entry(void *cpu_data_ptr)
+ {
+-	(void)arg;
+-	panic("linux64_cpu_entry: secondary CPU startup not ported yet");
++	cpu_data_t *cdp = (cpu_data_t *)cpu_data_ptr;
++
++	if (cdp == NULL) {
++		panic("linux64_cpu_entry: no cpu_data_t");
++	}
++	cpu_desc_load(cdp);
++	i386_init_slave();		/* never returns */
+ }
+ 
+ /* TODO(stage 4): restore an x86_THREAD_STATE64 and enter ring 3. */

@@ -140,6 +140,7 @@ index 0000000..ccc7ff6
 +	LINUX64_CTR_SWITCHES     = 4,
 +	LINUX64_CTR_LAST_CALL    = 6,
 +	LINUX64_CTR_RTCLOCK      = 7,	/* host timer injections */
++	LINUX64_CTR_IPI          = 8,	/* host IPI injections */
 +	LINUX64_CTR_THREAD       = 9,
 +	LINUX64_CTR_USER_EXC     = 10,	/* exceptions from ring 3 */
 +	LINUX64_CTR_USER_VECTOR  = 11,
@@ -514,9 +515,11 @@ index 0000000..15fb4d8
 + */
 +#include <linux64/linux64_x86_64.h>
 +#include <i386/cpu_data.h>
++#include <i386/lapic.h>
 +#include <i386/mp.h>
 +#include <i386/proc_reg.h>
 +#include <kern/debug.h>
++#include <machine/machine_cpu.h>
 +#include <pexpert/pexpert.h>
 +
 +/* Set by xnu.ko before vstart()/i386_init(). */
@@ -585,7 +588,9 @@ index 0000000..15fb4d8
 +	unsigned int slot = linux64_cpu_slot();
 +
 +	if (__sync_fetch_and_and(&linux64_ipi_pending[slot], 0)) {
++		extern void i386_signal_cpu(int, mp_sync_t, mp_call_t, mp_call_queue_t *);
 +		/* XNU's IPI handler uses no saved-state pointer on the polling path. */
++		i386_signal_cpu(cpu_number(), SYNC, CALL, NULL);
 +		cpu_signal_handler(NULL);
 +	}
 +}
@@ -602,10 +607,10 @@ index 0000000..15fb4d8
 +void
 +linux64_x86_timer(void)
 +{
-+	extern void rtclock_intr(unsigned int);
++	extern int rtclock_intr(x86_saved_state_t *regs);
 +
 +	linux64_count(LINUX64_CTR_RTCLOCK);
-+	rtclock_intr(FALSE);
++	(void)rtclock_intr(NULL);
 +}
 +
 +void
@@ -621,9 +626,9 @@ index 0000000..15fb4d8
 + * once cpu_desc_load()/GS is wired to the per-CPU world.
 + */
 +void
-+linux64_cpu_entry(void *cpu_data_ptr)
++linux64_cpu_entry(void *arg)
 +{
-+	(void)cpu_data_ptr;
++	(void)arg;
 +	panic("linux64_cpu_entry: secondary CPU startup not ported yet");
 +}
 +
