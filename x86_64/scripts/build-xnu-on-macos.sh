@@ -32,18 +32,43 @@ fi
 CLT=$(xcode-select -p)
 SDKROOT=${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo "$CLT/SDKs/MacOSX.sdk")}
 SDKVERSION=${SDKVERSION:-$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || echo 26.5)}
-MIG_TOOL=$(xcrun --sdk macosx --find mig 2>/dev/null || true)
-MIGCOM_TOOL=$(xcrun --sdk macosx --find migcom 2>/dev/null || true)
-IIG_TOOL=$(xcrun --sdk macosx --find iig 2>/dev/null || true)
-if [ -z "$MIG_TOOL" ] && [ -x "$CLT/usr/bin/mig" ]; then
-	MIG_TOOL="$CLT/usr/bin/mig"
-fi
-if [ -z "$MIGCOM_TOOL" ] && [ -x "$CLT/usr/libexec/migcom" ]; then
-	MIGCOM_TOOL="$CLT/usr/libexec/migcom"
-fi
-if [ -z "$IIG_TOOL" ] && [ -x "$CLT/usr/bin/iig" ]; then
-	IIG_TOOL="$CLT/usr/bin/iig"
-fi
+
+# Resolve every build tool through xcrun first.  On a full Xcode install the
+# binaries live under Toolchains/XcodeDefault.xctoolchain/usr/bin, not under
+# $(xcode-select -p)/usr/bin; hardcoding the latter breaks MIGCC and unifdef.
+find_tool() {
+	local name=$1 tool
+	tool=$(xcrun --sdk macosx --find "$name" 2>/dev/null || true)
+	if [ -z "$tool" ] && [ -x "$CLT/usr/bin/$name" ]; then
+		tool="$CLT/usr/bin/$name"
+	fi
+	if [ -z "$tool" ] && [ -x "$CLT/usr/libexec/$name" ]; then
+		tool="$CLT/usr/libexec/$name"
+	fi
+	printf '%s' "$tool"
+}
+
+CC_TOOL=$(find_tool clang)
+CXX_TOOL=$(find_tool clang++)
+MIG_TOOL=$(find_tool mig)
+MIGCOM_TOOL=$(find_tool migcom)
+IIG_TOOL=$(find_tool iig)
+STRIP_TOOL=$(find_tool strip)
+LIPO_TOOL=$(find_tool lipo)
+LIBTOOL_TOOL=$(find_tool libtool)
+OTOOL_TOOL=$(find_tool otool)
+NM_TOOL=$(find_tool nm)
+UNIFDEF_TOOL=$(find_tool unifdef)
+DSYMUTIL_TOOL=$(find_tool dsymutil)
+NMEDIT_TOOL=$(find_tool nmedit)
+
+for required in CC_TOOL CXX_TOOL MIG_TOOL MIGCOM_TOOL UNIFDEF_TOOL; do
+	if [ -z "${!required}" ]; then
+		echo "ERROR: cannot resolve required build tool: $required" >&2
+		exit 1
+	fi
+done
+
 OBJROOT=${OBJROOT:-$TREE/../xnu-hosted-obj}
 SYMROOT=${SYMROOT:-$TREE/../xnu-hosted-sym}
 DSTROOT=${DSTROOT:-$TREE/../xnu-hosted-dst}
@@ -61,19 +86,20 @@ MAKE_ENV=(
 	SDKVERSION="$SDKVERSION"
 	PLATFORM=MacOSX
 	PLATFORM_FOR_CONFIG=MacOSX
-	CC="$CLT/usr/bin/clang"
-	CXX="$CLT/usr/bin/clang++"
+	CC="$CC_TOOL"
+	CXX="$CXX_TOOL"
+	MIGCC="$CC_TOOL"
 	MIG="$MIG_TOOL"
 	MIGCOM="$MIGCOM_TOOL"
 	IIG="$IIG_TOOL"
-	STRIP="$CLT/usr/bin/strip"
-	LIPO="$CLT/usr/bin/lipo"
-	LIBTOOL="$CLT/usr/bin/libtool"
-	OTOOL="$CLT/usr/bin/otool"
-	NM="$CLT/usr/bin/nm"
-	UNIFDEF="$CLT/usr/bin/unifdef"
-	DSYMUTIL="$CLT/usr/bin/dsymutil"
-	NMEDIT="$CLT/usr/bin/nmedit"
+	STRIP="$STRIP_TOOL"
+	LIPO="$LIPO_TOOL"
+	LIBTOOL="$LIBTOOL_TOOL"
+	OTOOL="$OTOOL_TOOL"
+	NM="$NM_TOOL"
+	UNIFDEF="$UNIFDEF_TOOL"
+	DSYMUTIL="$DSYMUTIL_TOOL"
+	NMEDIT="$NMEDIT_TOOL"
 	ARCH_CONFIGS=X86_64
 	KERNEL_CONFIGS=DEVELOPMENT
 	RC_DARWIN_KERNEL_VERSION=25.5.0

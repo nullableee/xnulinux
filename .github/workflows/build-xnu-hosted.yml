@@ -36,6 +36,9 @@ jobs:
           xcode-select -p
           xcrun --sdk macosx --show-sdk-path
           xcrun --sdk macosx --show-sdk-version
+          for tool in clang clang++ mig migcom unifdef; do
+            xcrun --sdk macosx --find "$tool"
+          done
 
       - name: Fetch clean XNU and apply x86_64 patches
         shell: bash
