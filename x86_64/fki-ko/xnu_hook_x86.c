@@ -20,10 +20,20 @@
 #include <linux/preempt.h>
 #include <linux/string.h>
 #include <linux/timekeeping.h>
+#include <linux/jiffies.h>
 
 MODULE_LICENSE("GPL");
 
+/*
+ * With kprintf_probe enabled every _kprintf in XNU becomes an upcall.  A
+ * boot-time kprintf loop can otherwise do thousands of fsynced writes per
+ * second and bury insmod under writeback/reclaim pressure.  Cap the log
+ * rate while still returning from every upcall normally.
+ */
+#define KPRINTF_LOG_INTERVAL	(HZ / 20)	/* at most 20 log lines/sec */
+
 static unsigned long n_fault, n_user_enter, n_panic, n_assert;
+static unsigned long last_kprintf_log;
 static xnu_hook_translate_fn hook_translate;
 
 /*
@@ -59,16 +69,27 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 {
 	char buf[160];
 	int n;
+	int log_upcall = 1;
+
+	if (call == LINUX64_CALL_KPRINTF) {
+		if (time_before(jiffies, last_kprintf_log + KPRINTF_LOG_INTERVAL))
+			log_upcall = 0;
+		else
+			last_kprintf_log = jiffies;
+	}
 
 	fki_x86_phase_set(40, call);
-	pr_info("upcall: call=%lu a1=0x%lx a2=0x%lx "
-	    "preempt=0x%x nmi=%d irqoff=%d\n",
-	    call, a1, a2, preempt_count(), in_nmi(), irqs_disabled());
-	/* This runs in Linux world with IRQs/preemption on: safe to fsync. */
-	n = snprintf(buf, sizeof(buf), "upcall: call=%lu a1=0x%lx a2=0x%lx\n",
-	    call, a1, a2);
-	if (n > 0)
-		fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+	if (log_upcall) {
+		pr_info("upcall: call=%lu a1=0x%lx a2=0x%lx "
+		    "preempt=0x%x nmi=%d irqoff=%d\n",
+		    call, a1, a2, preempt_count(), (int)in_nmi(),
+		    (int)irqs_disabled());
+		/* Linux world with IRQs/preemption on: safe to fsync. */
+		n = snprintf(buf, sizeof(buf),
+		    "upcall: call=%lu a1=0x%lx a2=0x%lx\n", call, a1, a2);
+		if (n > 0)
+			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+	}
 
 	switch (call) {
 	case LINUX64_CALL_IDLE:
@@ -112,13 +133,13 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	}
 
 	case LINUX64_CALL_KPRINTF: {
-		char buf[256];
+		char kbuf[256];
 		const char *s = (const char *)(uintptr_t)hx(a1);
 
-		if (!s)
+		if (!s || !log_upcall)
 			return 0;
-		strscpy(buf, s, sizeof(buf));
-		printk(KERN_INFO "xnu] %s\n", buf);
+		strscpy(kbuf, s, sizeof(kbuf));
+		printk(KERN_INFO "xnu] %s\n", kbuf);
 		return 0;
 	}
 
