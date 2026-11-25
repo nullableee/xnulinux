@@ -61,6 +61,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          LOG="$RUNNER_TEMP/xnu-build.log"
+          set +e
           env \
             TREE="$PATCHED_XNU" \
             OBJROOT="$RUNNER_TEMP/xnu-hosted-obj" \
@@ -68,7 +70,18 @@ jobs:
             DSTROOT="$RUNNER_TEMP/xnu-hosted-dst" \
             OUT="$RUNNER_TEMP/xnu-hosted.kernel" \
             bash "$GITHUB_WORKSPACE/x86_64/scripts/build-xnu-on-macos.sh" \
-              "$RUNNER_TEMP/source-already-prepared.tar.gz"
+              "$RUNNER_TEMP/source-already-prepared.tar.gz" 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo "### XNU build failed (exit $rc)"
+              echo '```'
+              grep -E 'error:|fatal error:|undefined|ld:|make.*Error' "$LOG" | tail -80 || tail -120 "$LOG"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
 
       - name: Inspect kernel
         shell: bash
