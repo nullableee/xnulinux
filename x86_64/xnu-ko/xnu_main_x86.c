@@ -117,7 +117,13 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 	const unsigned long id_n_pde = DIV_ROUND_UP(map_top, 2UL << 20);
 	const unsigned long k_pages = DIV_ROUND_UP(vmhigh - vmlow, PAGE_SIZE);
 	const unsigned long k_first_pt = (vmlow >> PAGE_SHIFT) & 0x1ffUL;
-	const unsigned long k_n_pte = DIV_ROUND_UP(k_pages + k_first_pt, 512UL);
+	/*
+	 * XNU expects the booter to have installed the "static map"
+	 * 0xffffff8000000000 + pa -> pa for all low physical memory: its
+	 * ml_static_ptovirt() uses that alias for boot_args, the EFI map and
+	 * the page tables allocated from physfree.  One PTE page covers 2 MiB.
+	 */
+	const unsigned long k_n_pte = DIV_ROUND_UP(map_top, 2UL << 20);
 	const unsigned long stack_pages = stack_size >> PAGE_SHIFT;
 	unsigned long pt_size, i, n;
 	u64_t pa;
@@ -164,6 +170,16 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 		pt->pde_k[i] =
 		    (pa + (7 + i) * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 
+	/* ml_static_ptovirt() alias: kernel-half VA == low PA. */
+	for (i = 0; i < (map_top >> PAGE_SHIFT); i++) {
+		unsigned long pd = i >> 9;
+		unsigned long pt_i = i & 0x1ffUL;
+
+		pt->pte_k[pd][pt_i] =
+		    (i << PAGE_SHIFT) | PT_E_PRESENT | PT_E_WRITABLE;
+	}
+
+	/* Overlay the kernel image at its unslid link address (vmlow). */
 	for (n = 0; n < k_pages; n++) {
 		unsigned long idx = k_first_pt + n;
 		unsigned long pd = idx >> 9;
