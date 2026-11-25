@@ -19,7 +19,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/EXTERNAL_HEADERS/TrustCache/API.h
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,69 @@
 +/* SPDX-License-Identifier: APSL-2.0 */
 +/*
 + * Minimal TrustCache API stub for the hosted x86_64 XNU build.

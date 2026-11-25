@@ -500,10 +500,10 @@ index d66e3f8..fd86bec 100644
  		kasan_init();
 diff --git a/osfmk/i386/linux64_x86.c b/osfmk/i386/linux64_x86.c
 new file mode 100644
-index 0000000..15fb4d8
+index 0000000..1111111
 --- /dev/null
 +++ b/osfmk/i386/linux64_x86.c
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,136 @@
 +/*
 + * LINUX64 (xnulinux), x86_64 machine layer: the XNU side of the hosted state.
 + *
@@ -588,9 +588,8 @@ index 0000000..15fb4d8
 +	unsigned int slot = linux64_cpu_slot();
 +
 +	if (__sync_fetch_and_and(&linux64_ipi_pending[slot], 0)) {
-+		extern void i386_signal_cpu(int, mp_sync_t, mp_call_t, mp_call_queue_t *);
 +		/* XNU's IPI handler uses no saved-state pointer on the polling path. */
-+		i386_signal_cpu(cpu_number(), SYNC, CALL, NULL);
++		i386_signal_cpu(cpu_number(), MP_CALL, SYNC);
 +		cpu_signal_handler(NULL);
 +	}
 +}
@@ -626,9 +625,8 @@ index 0000000..15fb4d8
 + * once cpu_desc_load()/GS is wired to the per-CPU world.
 + */
 +void
-+linux64_cpu_entry(void *arg)
++linux64_cpu_entry(void *arg __unused)
 +{
-+	(void)arg;
 +	panic("linux64_cpu_entry: secondary CPU startup not ported yet");
 +}
 +
@@ -641,7 +639,7 @@ index 0000000..15fb4d8
 +	linux64_call2(LINUX64_CALL_USER_ENTER, 0, 0);
 +	panic("linux64_user_run: user entry not ported yet");
 +}
-diff --git a/osfmk/i386/machine_routines.c b/osfmk/i386/machine_routines.c
++diff --git a/osfmk/i386/machine_routines.c b/osfmk/i386/machine_routines.c
 index d7e433d..f01c0c0 100644
 --- a/osfmk/i386/machine_routines.c
 +++ b/osfmk/i386/machine_routines.c
