@@ -502,7 +502,7 @@ new file mode 100644
 index 0000000..15fb4d8
 --- /dev/null
 +++ b/osfmk/i386/linux64_x86.c
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,133 @@
 +/*
 + * LINUX64 (xnulinux), x86_64 machine layer: the XNU side of the hosted state.
 + *
@@ -517,7 +517,6 @@ index 0000000..15fb4d8
 +#include <i386/mp.h>
 +#include <i386/proc_reg.h>
 +#include <kern/debug.h>
-+#include <kern/printf.h>
 +#include <pexpert/pexpert.h>
 +
 +/* Set by xnu.ko before vstart()/i386_init(). */

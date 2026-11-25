@@ -78,6 +78,8 @@ mkdir -p "$OBJROOT" "$SYMROOT" "$DSTROOT"
 # makedefs/MakeInc.cmd loses migcom/iig and XNU selects a bogus PLATFORM.
 # Pass tool paths explicitly; patch 0007 tolerates the missing DriverKit
 # availability.pl and patch 0008 skips iig-generated DriverKit headers.
+# Do NOT pass DEPLOYMENT_TARGET_FLAGS: MakeInc.def appends -DXNU_TARGET_OS_OSX
+# to it, and a command-line value would override that append.
 MAKE_ENV=(
 	SDKROOT="$SDKROOT"
 	SDKROOT_RESOLVED="$SDKROOT"
@@ -104,8 +106,6 @@ MAKE_ENV=(
 	KERNEL_CONFIGS=DEVELOPMENT
 	RC_DARWIN_KERNEL_VERSION=25.5.0
 	RC_ProjectSourceVersion=12377.121.6
-	DEPLOYMENT_TARGET_FLAGS="-mmacosx-version-min=$SDKVERSION"
-	DEPLOYMENT_LINKER_FLAGS="-Wl,-macosx_version_min,$SDKVERSION"
 	BUILD_LTO=0
 	BUILD_WERROR=0
 	MAKEJOBS=-j"$JOBS"

@@ -36,14 +36,13 @@ diff --git a/osfmk/i386/linux64_x86.c b/osfmk/i386/linux64_x86.c
 index 15fb4d8..c6b177c 100644
 --- a/osfmk/i386/linux64_x86.c
 +++ b/osfmk/i386/linux64_x86.c
-@@ -10,6 +10,7 @@
+@@ -10,5 +10,6 @@
  #include <linux64/linux64_x86_64.h>
  #include <i386/cpu_data.h>
  #include <i386/mp.h>
 +#include <i386/mp_desc.h>
  #include <i386/proc_reg.h>
  #include <kern/debug.h>
- #include <kern/printf.h>
 @@ -104,23 +105,57 @@ linux64_x86_timer(void)
  	rtclock_intr(FALSE);
  }
