@@ -434,8 +434,10 @@ static DEFINE_MUTEX(fki_debug_lock);
  */
 volatile unsigned long fki_x86_phase;
 volatile unsigned long fki_x86_phase_arg;
+volatile unsigned long xnu_site3_hook_pre;
 EXPORT_SYMBOL(fki_x86_phase);
 EXPORT_SYMBOL(fki_x86_phase_arg);
+EXPORT_SYMBOL(xnu_site3_hook_pre);
 
 /* From xnu_hook_x86.c: upcalls are counted even when their log lines are
  * rate-limited, so a stable phase can be told apart from a long XNU run. */
@@ -470,7 +472,6 @@ static const char *fki_phase_name(unsigned long p)
 	case 24: return "upcall_xnu";
 	case 25: return "upcall_abort";
 	case 70: return "site3_pre_cr3";
-	case 74: return "site3_hook_pre";
 	case 71: return "site3_post_cr3";
 	case 72: return "site3_hook_read";
 	case 73: return "site3_before_call";
@@ -511,8 +512,9 @@ static int fki_phase_logger(void *unused)
 		if (p != last || ++tick >= 20) {
 			char buf[224];
 			int n = snprintf(buf, sizeof(buf),
-			    "phase: %lu %s arg=0x%lx upcalls=%lu last=0x%lx\n",
+			    "phase: %lu %s arg=0x%lx pre=0x%lx upcalls=%lu last=0x%lx\n",
 			    p, fki_phase_name(p), READ_ONCE(fki_x86_phase_arg),
+			    READ_ONCE(xnu_site3_hook_pre),
 			    READ_ONCE(xnu_upcall_count),
 			    READ_ONCE(xnu_upcall_last));
 

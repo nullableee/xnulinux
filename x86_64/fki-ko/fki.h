@@ -47,6 +47,8 @@ int fki_debug_log(const char *s, unsigned long len);
  */
 extern volatile unsigned long fki_x86_phase;
 extern volatile unsigned long fki_x86_phase_arg;
+/* site3 snapshot of _linux64_hook before the CR3 switch (diagnostic). */
+extern volatile unsigned long xnu_site3_hook_pre;
 void fki_x86_phase_set(unsigned long phase, unsigned long arg);
 /* Fill a zeroed XSAVE buffer with a sane FPU/SIMD state for a foreign world. */
 void fki_x86_fpstate_save(void *buf);

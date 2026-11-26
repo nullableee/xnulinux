@@ -344,12 +344,13 @@ xnu_world_site3_probe_x86:
 	movq	%rbx, (%r11)
 	movabsq	$0xffffff800106f360, %r11
 	movl	(%r11), %eax
-	/* Is the hook already zero under the booter page tables, before CR3? */
+	/* Snapshot the hook under the booter page tables into a dedicated
+	 * global. The phase word below changes too fast for the logger to
+	 * sample, so this value is printed alongside phase 72. */
 	pushq	%r9
 	movabsq	$0xffffff800106fa70, %r9
 	movq	(%r9), %r9
-	movq	%r9, fki_x86_phase_arg(%rip)
-	movq	$74, fki_x86_phase(%rip)
+	movq	%r9, xnu_site3_hook_pre(%rip)
 	popq	%r9
 	/* Carry IdlePML4 into the saved XNU state here: site4 is deliberately
 	 * not installed in this experiment. W finds this CPU's world but
