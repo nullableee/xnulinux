@@ -232,19 +232,16 @@ xnu_world_upcall_x86:
  * Address XNU sees as linux64_hook. It must live in module text: the host
  * loader maps these pages into the XNU page tables for the downcall, and
  * Linux already maps them executable for the instructions after the CR3
- * switch. The actual world/CR3 switch is done by fki_x86_leave().
+ * switch. Only the host CR3 variable is read before the switch.
  */
 	.globl xnu_world_hook_trampoline_x86
 	.type  xnu_world_hook_trampoline_x86, @function
 xnu_world_hook_trampoline_x86:
 	endbr64
-	/*
-	 * Do not switch CR3 here.  The module text and data are mapped in XNU's
-	 * page tables, so fki_x86_leave() can safely save XNU's *current* CR3
-	 * (including the IdlePML4 installed by Idle_PTs_init()) before loading
-	 * the saved Linux state.  Switching early made the world state keep the
-	 * stale boot CR3 and lost the switch after set_cr3_raw().
-	 */
+	movq	xnu_host_cr3_x86(%rip), %rax
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$20, fki_x86_phase(%rip)
+	movq	%rax, %cr3
 	jmp	xnu_world_upcall_x86
 	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86
 
@@ -351,14 +348,24 @@ xnu_world_site3_probe_x86:
 	jmp	*%r11
 	.size	xnu_world_site3_probe_x86, . - xnu_world_site3_probe_x86
 
-/* vstart+0xf45, immediately after set_cr3_raw(IdlePML4). Replay leaq/mov/test
- * and resume at the je, so the following KPRINTF/KERNEL_TABLES upcalls still
- * see the real _linux64_hook value in %r14. */
+/* vstart+0xf45, immediately after set_cr3_raw(IdlePML4). Record the new CR3
+ * in this CPU's saved world state, replay leaq/mov/test, then resume at the
+ * je so the following KPRINTF/KERNEL_TABLES upcalls still see the real
+ * _linux64_hook value in %r14. */
 	.globl xnu_world_site4_probe_x86
 	.type  xnu_world_site4_probe_x86, @function
 xnu_world_site4_probe_x86:
 	endbr64
+	/* %rax still holds the IdlePML4 physical address just loaded into CR3.
+	 * %r11 is deliberately not restored by SITE_PROBE, so it carries the
+	 * value across the upcall without clobbering a callee-saved register. */
+	movq	%rax, %r11
 	SITE_PROBE 4
+	/* The trampoline switched to Linux CR3 and fki_x86_leave() restored the
+	 * stale boot CR3 in this world's saved state. Replace it with IdlePML4
+	 * now so every later upcall returns to the switched address space. */
+	W	%rdi
+	movq	%r11, XW_XNU_STATE(%rdi)
 	movabsq	$0xffffff800106fa70, %r14
 	movq	(%r14), %rax
 	testq	%rax, %rax
