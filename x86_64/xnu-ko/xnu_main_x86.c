@@ -648,6 +648,36 @@ static int write_xnu_globals(void)
 				*(u8 *)kprintf_va = 0xc3; /* ret: avoid COM1 UART */
 			}
 		}
+
+		/*
+		 * The host CPU is a 13th-gen Core (family 6, model 0xb7) that
+		 * this XNU tree does not list, so cpuid_set_info() takes its
+		 * cold path and panics with "Unsupported CPU".  There is no
+		 * reason to die during hosted boot: turn the call into NOPs so
+		 * the same fall-through path as a recognized CPU is taken.
+		 */
+		{
+			u64_t a_cpuid = macho_x86_sym(&img, "_cpuid_set_info");
+			u64_t a_cold = macho_x86_sym(&img, "_cpuid_set_info.cold.1");
+			u8 *code = a_cpuid ? xnu_va_to_host(a_cpuid) : NULL;
+			unsigned int i;
+
+			if (code && a_cold) {
+				for (i = 0; i < 0x2000 - 5; i++) {
+					u32 rel;
+
+					if (code[i] != 0xe8)
+						continue;
+					rel = *(u32 *)(&code[i + 1]);
+					if (a_cpuid + i + 5 + (s64)(s32)rel == a_cold) {
+						memset(&code[i], 0x90, 5);
+						debugf("xnu86: skip unsupported CPU panic at 0x%llx\n",
+						    (unsigned long long)(a_cpuid + i));
+						break;
+					}
+				}
+			}
+		}
 	}
 	return 0;
 }
