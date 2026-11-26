@@ -269,8 +269,8 @@ xnu_world_kprintf_probe_x86:
  * gate (so it is fsynced with the rest of the trace), restore, and then run
  * the original instructions. %rbx is preserved by the upcall itself, so it
  * can hold the unaligned stack pointer across the alignment adjustment.
- * %r11 is deliberately not restored: no probe site uses it and it gives us
- * a scratch register for the final absolute jump.
+ * %r11 is deliberately not restored: write_abs_jmp() already clobbers it to
+ * enter every probe, and site1 reuses it for the final absolute jump.
  */
 	.macro SITE_PROBE id
 	pushfq
@@ -302,15 +302,17 @@ xnu_world_kprintf_probe_x86:
 	popfq
 	.endm
 
-/* vstart 0x9c4, right after doublemap_init() returns. The original two
- * instructions (leaq master_idt64(%rip),%r9; nop) are replayed below. */
+/* vstart 0x9c4, right after doublemap_init() returns. The original leaq/nop
+ * is replaced by the 13-byte absolute jump, which also consumes the first byte
+ * of the loop's movq at 0x9d0. Replay that movq here and resume at 0x9d4. */
 	.globl xnu_world_site1_probe_x86
 	.type  xnu_world_site1_probe_x86, @function
 xnu_world_site1_probe_x86:
 	endbr64
 	SITE_PROBE 1
 	movabsq	$0xffffff800010c000, %r9	/* _master_idt64 */
-	movabsq	$0xffffff80004ef7d0, %r11	/* resume _vstart+0x9d0 */
+	movq	(%r9,%rdi), %rsi		/* replay _vstart+0x9d0 */
+	movabsq	$0xffffff80004ef7d4, %r11	/* resume _vstart+0x9d4 */
 	jmp	*%r11
 	.size	xnu_world_site1_probe_x86, . - xnu_world_site1_probe_x86
 

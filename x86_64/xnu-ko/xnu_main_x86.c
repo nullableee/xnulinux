@@ -578,12 +578,15 @@ static u64_t x86_read_cr3(void)
 	return v;
 }
 
-/* Patch 12 bytes with movabs $target, %rax ; jmp *%rax. The image mapping and
- * module text are far apart, so a rel32 jmp cannot reach the probe. */
+/* Patch 13 bytes with movabs $target, %r11 ; jmp *%r11. The image mapping and
+ * module text are far apart, so a rel32 jmp cannot reach the probe. %r11 is
+ * used because every patched site already treats it as caller-saved scratch:
+ * at vstart+0x9c4 the loop keeps dblmap_dist in %rax, so a %rax-based jump
+ * would destroy the very value the IDT remap is about to use. */
 static void write_abs_jmp(void *dst, unsigned long target)
 {
-	u8 jmp[12] = {
-	    0x48, 0xb8,
+	u8 jmp[13] = {
+	    0x49, 0xbb,
 	    (u8)(target & 0xff),
 	    (u8)((target >> 8) & 0xff),
 	    (u8)((target >> 16) & 0xff),
@@ -592,7 +595,7 @@ static void write_abs_jmp(void *dst, unsigned long target)
 	    (u8)((target >> 40) & 0xff),
 	    (u8)((target >> 48) & 0xff),
 	    (u8)((target >> 56) & 0xff),
-	    0xff, 0xe0,
+	    0x41, 0xff, 0xe3,
 	};
 
 	memcpy(dst, jmp, sizeof(jmp));
