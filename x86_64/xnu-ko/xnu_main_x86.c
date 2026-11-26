@@ -1110,10 +1110,32 @@ static int __init xnu_x86_init(void)
 	 * build_init_pt() overlays with our copied image, so use the link offset
 	 * rather than the arbitrary physical address of the allocation.
 	 */
-	err = linux64_boot_args_init(ba, kc_phys, img.vmhigh - img.vmlow,
-	    img.text_vmaddr - XNU_VM_MIN_KERNEL, cmdline_copy,
-	    (u32_t)efi_region.pa, efi_map, efi_count, sizeof(efi_map[0]),
-	    total, 0, 0);
+	/*
+	 * Idle_PTs_init() remaps the image starting at &_mh_execute_header
+	 * (__TEXT), not at the lowest KC segment (__HIB).  Report kaddr/ksize
+	 * relative to __TEXT so its KPTphys overlay lands on the same bytes we
+	 * copied.  kaddr + ksize stays kc_phys + image size, so physfree and
+	 * kdata_end are unaffected.
+	 */
+	{
+		u64_t text_delta = img.text_vmaddr - img.vmlow;
+
+		if (!text_delta || text_delta >= img.vmhigh - img.vmlow) {
+			pr_err("xnu86: bad __TEXT offset 0x%llx\n",
+			    (unsigned long long)text_delta);
+			err = -EINVAL;
+		} else {
+			err = linux64_boot_args_init(ba, kc_phys + text_delta,
+			    (u32_t)(img.vmhigh - img.text_vmaddr),
+			    img.text_vmaddr - XNU_VM_MIN_KERNEL, cmdline_copy,
+			    (u32_t)efi_region.pa, efi_map, efi_count,
+			    sizeof(efi_map[0]), total, 0, 0);
+			debugf("loader: kaddr=0x%llx ksize=0x%llx (delta=0x%llx)\n",
+			    (unsigned long long)(kc_phys + text_delta),
+			    (unsigned long long)(img.vmhigh - img.text_vmaddr),
+			    (unsigned long long)text_delta);
+		}
+	}
 	if (err) {
 		pr_err("xnu86: boot_args init failed (%d)\n", err);
 		kfree(cmdline_copy);
