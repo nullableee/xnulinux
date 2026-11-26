@@ -369,7 +369,29 @@ xnu_world_site3_probe_x86:
 	movq	%rax, %cr3
 	movq	%rax, fki_x86_phase_arg(%rip)
 	movq	$71, fki_x86_phase(%rip)
-	movabsq	$0xffffff80004efd45, %r11
+
+	/* Replay vstart+0xf45..0xf6f ourselves. 72 proves the hook pointer
+	 * was read; 73 proves the debug/arg setup finished and the indirect
+	 * call at 0xf71 is next. The je condition is preserved by doing the
+	 * test here and branching before the phase writes (mov to memory does
+	 * not touch flags). */
+	movabsq	$0xffffff800106fa70, %r14
+	movq	(%r14), %rax
+	testq	%rax, %rax
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$72, fki_x86_phase(%rip)
+	jz	.Lsite3_no_hook
+	movabsq	$0xffffff800106fe80, %rbx
+	movq	$0x3e6, 0x30(%rbx)
+	movabsq	$0xffffff8000cb5fb0, %rsi
+	movl	$0x3e6, %edi
+	xorl	%edx, %edx
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$73, fki_x86_phase(%rip)
+	movabsq	$0xffffff80004efd71, %r11
+	jmp	*%r11
+.Lsite3_no_hook:
+	movabsq	$0xffffff80004efd92, %r11
 	jmp	*%r11
 	.size	xnu_world_site3_probe_x86, . - xnu_world_site3_probe_x86
 

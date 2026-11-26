@@ -471,6 +471,8 @@ static const char *fki_phase_name(unsigned long p)
 	case 25: return "upcall_abort";
 	case 70: return "site3_pre_cr3";
 	case 71: return "site3_post_cr3";
+	case 72: return "site3_hook_read";
+	case 73: return "site3_before_call";
 	case 30: return "leave_entry";
 	case 31: return "leave_pre_cr3";
 	case 32: return "leave_done";
