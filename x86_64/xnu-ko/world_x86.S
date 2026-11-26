@@ -615,7 +615,8 @@ xnu_world_cache_p24_x86:
 	pushq	%r15
 	pushq	%r14
 	pushq	%r13
-	JMP_XNU 0xffffff80004e6e7c
+	pushq	%rbx
+	JMP_XNU 0xffffff80004e6e7d
 	.size	xnu_world_cache_p24_x86, . - xnu_world_cache_p24_x86
 
 	.globl xnu_world_cache_p25_x86
@@ -642,7 +643,8 @@ xnu_world_wa_p26_x86:
 	movabsq	$0xffffff80010eb3c0, %r11
 	cmpb	$0, (%r11)
 	jne	.Lp26_taken
-	JMP_XNU 0xffffff80004e8792
+	movabsq	$0xffffff8000cb3ece, %rdi
+	JMP_XNU 0xffffff80004e8799
 .Lp26_taken:
 	JMP_XNU 0xffffff80004e87e7
 	.size	xnu_world_wa_p26_x86, . - xnu_world_wa_p26_x86
