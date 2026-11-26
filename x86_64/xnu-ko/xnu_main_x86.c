@@ -716,6 +716,30 @@ static int write_xnu_globals(void)
 				    (unsigned long long)(a_cpuid + store_off));
 			}
 		}
+
+		/*
+		 * early_random() pulls in the whole HMAC-SHA2 DRBG plus the
+		 * RDSEED/RDRAND sampling loop.  Under hosted boot that path
+		 * wedges inside Idle_PTs_init() before its breadcrumb is
+		 * reached.  Only the one-shot physmap/doublemap slides use the
+		 * value here, so make it deterministic and skip the entropy
+		 * machinery entirely.  Firmware is left untouched.
+		 */
+		{
+			u64_t a_rand = macho_x86_sym(&img, "_early_random");
+			u8 *code = a_rand ? xnu_va_to_host(a_rand) : NULL;
+			u8 ret_zero[11] = {
+			    0x48, 0xb8,
+			    0, 0, 0, 0, 0, 0, 0, 0,
+			    0xc3,
+			};
+
+			if (code) {
+				memcpy(code, ret_zero, sizeof(ret_zero));
+				debugf("xnu86: early_random returns fixed 0 at 0x%llx\n",
+				    (unsigned long long)a_rand);
+			}
+		}
 	}
 	return 0;
 }
