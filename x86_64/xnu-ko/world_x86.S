@@ -474,6 +474,40 @@ xnu_world_site9_probe_x86:
 	jmp	*%r11
 	.size	xnu_world_site9_probe_x86, . - xnu_world_site9_probe_x86
 
+/* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
+ * cpuid_info(). Both replay the original compare/branch so the early-exit
+ * path still lands at cpc_early_init+0xe7. */
+	.globl xnu_world_cpc1_probe_x86
+	.type  xnu_world_cpc1_probe_x86, @function
+xnu_world_cpc1_probe_x86:
+	endbr64
+	SITE_PROBE 10
+	testl	%eax, %eax
+	jne	.Lcpc1_exit
+	movabsq	$0xffffff80004e5710, %r11	/* cpuid_info */
+	call	*%r11
+	movabsq	$0xffffff8000512fc3, %r11
+	jmp	*%r11
+.Lcpc1_exit:
+	movabsq	$0xffffff8000513087, %r11
+	jmp	*%r11
+	.size	xnu_world_cpc1_probe_x86, . - xnu_world_cpc1_probe_x86
+
+	.globl xnu_world_cpc2_probe_x86
+	.type  xnu_world_cpc2_probe_x86, @function
+xnu_world_cpc2_probe_x86:
+	endbr64
+	SITE_PROBE 11
+	cmpb	$0x2, 0x138(%rax)
+	jne	.Lcpc2_exit
+	movq	%rax, %rbx
+	movabsq	$0xffffff8000512fd0, %r11
+	jmp	*%r11
+.Lcpc2_exit:
+	movabsq	$0xffffff8000513087, %r11
+	jmp	*%r11
+	.size	xnu_world_cpc2_probe_x86, . - xnu_world_cpc2_probe_x86
+
 /* vstart+0xf45, immediately after set_cr3_raw(IdlePML4). Record the new CR3
  * in this CPU's saved world state, replay leaq/mov/test, then resume at the
  * je so the following KPRINTF/KERNEL_TABLES upcalls still see the real

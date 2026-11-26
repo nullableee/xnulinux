@@ -747,6 +747,50 @@ static int write_xnu_globals(void)
 					}
 				}
 
+				/* Inside cpc_early_init(), which is the first call after
+				 * the KERNEL_TABLES upcall. */
+				{
+					u64_t a_cpc = macho_x86_sym(&img,
+					    "_cpc_early_init");
+
+					static const struct {
+						u64_t off;
+						const u8 expect[13];
+						void (*probe)(void);
+					} cpc_sites[] = {
+					    { 0x16, {
+						0x85, 0xc0, 0x0f, 0x85, 0xc9, 0x00,
+						0x00, 0x00, 0xe8, 0x4d, 0x27, 0xfd, 0xff },
+						    xnu_world_cpc1_probe_x86 },
+					    { 0x23, {
+						0x80, 0xb8, 0x38, 0x01, 0x00, 0x00,
+						0x02, 0x0f, 0x82, 0xb7, 0x00, 0x00, 0x00 },
+						    xnu_world_cpc2_probe_x86 },
+					};
+					unsigned int s;
+
+					if (!a_cpc)
+						pr_warn("xnu86: _cpc_early_init not found\n");
+					for (s = 0; a_cpc && s < ARRAY_SIZE(cpc_sites); s++) {
+						u8 *at = xnu_va_to_host(a_cpc +
+						    cpc_sites[s].off);
+
+						if (at && !memcmp(at, cpc_sites[s].expect,
+						    sizeof(cpc_sites[s].expect))) {
+							write_abs_jmp(at,
+							    (unsigned long)(uintptr_t)
+							    cpc_sites[s].probe);
+							debugf("xnu86: cpc site %u at 0x%llx\n",
+							    s + 10,
+							    (unsigned long long)
+							    (a_cpc + cpc_sites[s].off));
+						} else {
+							pr_warn("xnu86: cpc site %u pattern not found\n",
+							    s + 10);
+						}
+					}
+				}
+
 				/* Do not install site4 in this experiment. site3 now
 				 * performs the CR3 switch itself and leaves a phase
 				 * breadcrumb; a post-switch upcall would change the
