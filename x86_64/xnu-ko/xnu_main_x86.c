@@ -675,26 +675,6 @@ static int write_xnu_globals(void)
 		}
 
 		if (kprintf_probe) {
-			/* ml_static_ptovirt(): called from the host-map loop. */
-			u64_t a_ptovirt = macho_x86_sym(&img,
-			    "_ml_static_ptovirt");
-			u8 *code = a_ptovirt ? xnu_va_to_host(a_ptovirt) : NULL;
-			static const u8 expect[12] = {
-			    0x55, 0x48, 0x89, 0xe5, 0x48, 0xb8,
-			    0x00, 0x00, 0x00, 0x00, 0x80, 0xff,
-			};
-
-			if (code && !memcmp(code, expect, sizeof(expect))) {
-				write_abs_jmp(code, (unsigned long)(uintptr_t)
-				    xnu_world_ptovirt_probe_x86);
-				debugf("xnu86: ptovirt probe at 0x%llx\n",
-				    (unsigned long long)a_ptovirt);
-			} else {
-				pr_warn("xnu86: ptovirt pattern not found\n");
-			}
-		}
-
-		if (kprintf_probe) {
 			u64_t a_vstart = macho_x86_sym(&img, "_vstart");
 
 			if (!a_vstart) {

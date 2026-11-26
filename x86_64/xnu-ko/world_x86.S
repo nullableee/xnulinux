@@ -232,16 +232,19 @@ xnu_world_upcall_x86:
  * Address XNU sees as linux64_hook. It must live in module text: the host
  * loader maps these pages into the XNU page tables for the downcall, and
  * Linux already maps them executable for the instructions after the CR3
- * switch. Only the host CR3 variable is read before the switch.
+ * switch. The actual world/CR3 switch is done by fki_x86_leave().
  */
 	.globl xnu_world_hook_trampoline_x86
 	.type  xnu_world_hook_trampoline_x86, @function
 xnu_world_hook_trampoline_x86:
 	endbr64
-	movq	xnu_host_cr3_x86(%rip), %rax
-	movq	%rax, fki_x86_phase_arg(%rip)
-	movq	$20, fki_x86_phase(%rip)
-	movq	%rax, %cr3
+	/*
+	 * Do not switch CR3 here.  The module text and data are mapped in XNU's
+	 * page tables, so fki_x86_leave() can safely save XNU's *current* CR3
+	 * (including the IdlePML4 installed by Idle_PTs_init()) before loading
+	 * the saved Linux state.  Switching early made the world state keep the
+	 * stale boot CR3 and lost the switch after set_cr3_raw().
+	 */
 	jmp	xnu_world_upcall_x86
 	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86
 

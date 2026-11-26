@@ -240,23 +240,25 @@ void fki_x86_leave(unsigned long cookie, struct fki_x86_state *saved,
 	if (!saved)
 		return;
 	/*
-	 * The upcall switched CR3 to Linux but XNU's IDT is still loaded until
-	 * fki_x86_load_state_asm() below. Mask interrupts before touching any
-	 * state: a timer tick here would vector through XNU's handlers with
-	 * Linux CR3 active and hang the CPU. fki_x86_enter_prep() left
-	 * preemption disabled, and cookie restores the original IRQ flags at
-	 * the end of this function.
+	 * XNU's IDT is still loaded until fki_x86_load_state_asm() below.
+	 * Mask interrupts before touching any state: a timer tick here would
+	 * vector through XNU's handlers with Linux CR3 active and hang the CPU.
+	 * fki_x86_enter_prep() left preemption disabled, and cookie restores the
+	 * original IRQ flags at the end of this function.
 	 */
 	local_irq_disable();
 	fki_x86_phase_set(30, 0);
 	if (foreign) {
-		fki_u64 prev_cr3 = foreign->cr3;
-
+		/*
+		 * Save XNU's current CR3, not the boot CR3. Idle_PTs_init()
+		 * switches to IdlePML4 before the first post-switch upcall;
+		 * preserving that value here is what keeps later upcalls in
+		 * the same address space. The hook trampoline no longer switches
+		 * CR3 early, so this really is XNU's live CR3.
+		 */
 		fki_x86_phase_set(34, (unsigned long)foreign);
 		x86_save_state(foreign);
 		fki_x86_phase_set(35, foreign->cr3);
-		if (prev_cr3)
-			foreign->cr3 = prev_cr3;
 	}
 	fki_x86_phase_set(31, saved->cr3);
 	fki_x86_load_state_asm(saved);
