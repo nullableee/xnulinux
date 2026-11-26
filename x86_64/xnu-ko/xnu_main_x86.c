@@ -816,6 +816,95 @@ static int write_xnu_globals(void)
 					}
 				}
 
+				{
+					struct cpuid_site {
+						const char *sym;
+						u64_t off;
+						u8 expect[13];
+						unsigned int id;
+						void (*probe)(void);
+					};
+					static const struct cpuid_site sites[] = {
+					    { "_cpuid_info", 0x6c, {
+						0xbf, 0x03, 0x00, 0x00, 0x00,
+						0xe8, 0xfa, 0x2f, 0x00, 0x00,
+						0x83, 0xf8, 0x02 }, 14,
+						    xnu_world_cpuid_p14_x86 },
+					    { "_cpuid_info", 0x134b, {
+						0x48, 0x8b, 0x05, 0xf6, 0x46,
+						0xc0, 0x00, 0x48, 0x89, 0xc2,
+						0x48, 0xf7, 0xd2 }, 16,
+						    xnu_world_cpuid_p16_x86 },
+					    { "_cpuid_info", 0x137e, {
+						0xf7, 0xd2, 0xb9, 0x08, 0x00,
+						0x00, 0x00, 0xf7, 0xc2, 0x28,
+						0x01, 0x00, 0x00 }, 17,
+						    xnu_world_cpuid_p17_x86 },
+					    { "_cpuid_info", 0x13c4, {
+						0x83, 0x3d, 0x85, 0x48, 0xc0,
+						0x00, 0x00, 0x75, 0x7d, 0xe9,
+						0xfa, 0x00, 0x00 }, 18,
+						    xnu_world_cpuid_p18_x86 },
+					    { "_cpuid_info", 0x13fe, {
+						0x0f, 0x32, 0x09, 0xc2, 0xb9,
+						0x01, 0x00, 0x01, 0x00, 0x0f,
+						0x45, 0xc8, 0x0f }, 19,
+						    xnu_world_cpuid_p19_x86 },
+					    { "_cpuid_info", 0x141a, {
+						0x0f, 0x32, 0x09, 0xc2, 0xb9,
+						0x01, 0x00, 0x01, 0x00, 0x0f,
+						0x45, 0xc8, 0x0f }, 20,
+						    xnu_world_cpuid_p20_x86 },
+					    { "_cpuid_info", 0x143d, {
+						0x83, 0x3d, 0x0c, 0x48, 0xc0,
+						0x00, 0x00, 0x0f, 0x84, 0x82,
+						0x00, 0x00, 0x00 }, 21,
+						    xnu_world_cpuid_p21_x86 },
+					    { "_cpuid_info", 0x14da, {
+						0x48, 0x8d, 0x1d, 0x0f, 0x45,
+						0xc0, 0x00, 0x48, 0x89, 0xdf,
+						0xbe, 0x01, 0x00 }, 22,
+						    xnu_world_cpuid_p22_x86 },
+					    { "_cpuid_info", 0x14ff, {
+						0x48, 0x8b, 0x00, 0x48, 0x3b,
+						0x45, 0xd0, 0x75, 0x17, 0x48,
+						0x81, 0xc4, 0x98 }, 23,
+						    xnu_world_cpuid_p23_x86 },
+					    { "_cpuid_set_cache_info", 0x00, {
+						0x55, 0x48, 0x89, 0xe5, 0x41,
+						0x57, 0x41, 0x56, 0x41, 0x55,
+						0x41, 0x54, 0x53 }, 24,
+						    xnu_world_cache_p24_x86 },
+					    { "_cpuid_set_cache_info", 0x54, {
+						0xb8, 0x02, 0x00, 0x00, 0x00,
+						0x31, 0xdb, 0x31, 0xc9, 0x31,
+						0xd2, 0x0f, 0xa2 }, 25,
+						    xnu_world_cache_p25_x86 },
+					};
+					unsigned int s;
+
+					for (s = 0; s < ARRAY_SIZE(sites); s++) {
+						u64_t a = macho_x86_sym(&img,
+						    sites[s].sym);
+						u8 *at = a ? xnu_va_to_host(a +
+						    sites[s].off) : NULL;
+
+						if (at && !memcmp(at, sites[s].expect,
+						    sizeof(sites[s].expect))) {
+							write_abs_jmp(at,
+							    (unsigned long)(uintptr_t)
+							    sites[s].probe);
+							debugf("xnu86: cpuid site %u at 0x%llx\n",
+							    sites[s].id,
+							    (unsigned long long)(a +
+							    sites[s].off));
+						} else {
+							pr_warn("xnu86: cpuid site %u pattern not found\n",
+							    sites[s].id);
+						}
+					}
+				}
+
 				/* Do not install site4 in this experiment. site3 now
 				 * performs the CR3 switch itself and leaves a phase
 				 * breadcrumb; a post-switch upcall would change the

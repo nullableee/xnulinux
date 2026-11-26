@@ -491,6 +491,146 @@ xnu_world_cpuid_probe_x86:
 	jmp	*%r11
 	.size	xnu_world_cpuid_probe_x86, . - xnu_world_cpuid_probe_x86
 
+/* cpuid_set_info() breadcrumbs. Every patched window is exactly 13 bytes and
+ * ends on an instruction boundary, so each stub replays the original bytes
+ * before resuming. %r11 is sacrificial after SITE_PROBE. */
+	.macro JMP_XNU addr
+	movabsq	$\addr, %r11
+	jmp	*%r11
+	.endm
+
+	.globl xnu_world_cpuid_p14_x86
+	.type  xnu_world_cpuid_p14_x86, @function
+xnu_world_cpuid_p14_x86:
+	endbr64
+	SITE_PROBE 14
+	movl	$3, %edi
+	movabsq	$0xffffff80004e8780, %r11
+	call	*%r11
+	cmpl	$2, %eax
+	JMP_XNU 0xffffff80004e5789
+	.size	xnu_world_cpuid_p14_x86, . - xnu_world_cpuid_p14_x86
+
+	.globl xnu_world_cpuid_p16_x86
+	.type  xnu_world_cpuid_p16_x86, @function
+xnu_world_cpuid_p16_x86:
+	endbr64
+	SITE_PROBE 16
+	movabsq	$0xffffff80010eb158, %rax
+	movq	%rax, %rdx
+	notq	%rdx
+	JMP_XNU 0xffffff80004e6a68
+	.size	xnu_world_cpuid_p16_x86, . - xnu_world_cpuid_p16_x86
+
+	.globl xnu_world_cpuid_p17_x86
+	.type  xnu_world_cpuid_p17_x86, @function
+xnu_world_cpuid_p17_x86:
+	endbr64
+	SITE_PROBE 17
+	notl	%edx
+	movl	$8, %ecx
+	testl	$0x128, %edx
+	JMP_XNU 0xffffff80004e6a9b
+	.size	xnu_world_cpuid_p17_x86, . - xnu_world_cpuid_p17_x86
+
+	.globl xnu_world_cpuid_p18_x86
+	.type  xnu_world_cpuid_p18_x86, @function
+xnu_world_cpuid_p18_x86:
+	endbr64
+	SITE_PROBE 18
+	movabsq	$0xffffff80010eb360, %r11
+	cmpl	$0, (%r11)
+	JMP_XNU 0xffffff80004e6adb
+	.size	xnu_world_cpuid_p18_x86, . - xnu_world_cpuid_p18_x86
+
+	.globl xnu_world_cpuid_p19_x86
+	.type  xnu_world_cpuid_p19_x86, @function
+xnu_world_cpuid_p19_x86:
+	endbr64
+	SITE_PROBE 19
+	rdmsr
+	orl	%eax, %edx
+	movl	$0x10001, %ecx
+	cmovne	%eax, %ecx
+	JMP_XNU 0xffffff80004e6b1a
+	.size	xnu_world_cpuid_p19_x86, . - xnu_world_cpuid_p19_x86
+
+	.globl xnu_world_cpuid_p20_x86
+	.type  xnu_world_cpuid_p20_x86, @function
+xnu_world_cpuid_p20_x86:
+	endbr64
+	SITE_PROBE 20
+	rdmsr
+	orl	%eax, %edx
+	movl	$0x10001, %ecx
+	cmovne	%eax, %ecx
+	JMP_XNU 0xffffff80004e6b36
+	.size	xnu_world_cpuid_p20_x86, . - xnu_world_cpuid_p20_x86
+
+	.globl xnu_world_cpuid_p21_x86
+	.type  xnu_world_cpuid_p21_x86, @function
+xnu_world_cpuid_p21_x86:
+	endbr64
+	SITE_PROBE 21
+	movabsq	$0xffffff80010eb360, %r11
+	cmpl	$0, (%r11)
+	jne	.Lp21_taken
+	JMP_XNU 0xffffff80004e6bdc
+.Lp21_taken:
+	JMP_XNU 0xffffff80004e6b5a
+	.size	xnu_world_cpuid_p21_x86, . - xnu_world_cpuid_p21_x86
+
+	.globl xnu_world_cpuid_p22_x86
+	.type  xnu_world_cpuid_p22_x86, @function
+xnu_world_cpuid_p22_x86:
+	endbr64
+	SITE_PROBE 22
+	movabsq	$0xffffff80010eb100, %rbx
+	movq	%rbx, %rdi
+	movl	$1, %esi
+	JMP_XNU 0xffffff80004e6bf9
+	.size	xnu_world_cpuid_p22_x86, . - xnu_world_cpuid_p22_x86
+
+	.globl xnu_world_cpuid_p23_x86
+	.type  xnu_world_cpuid_p23_x86, @function
+xnu_world_cpuid_p23_x86:
+	endbr64
+	SITE_PROBE 23
+	movabsq	$0xffffff80010b3218, %r11
+	movq	(%r11), %rax
+	cmpq	-0x30(%rbp), %rax
+	je	.Lp23_done
+	JMP_XNU 0xffffff80004e6c2f
+.Lp23_done:
+	JMP_XNU 0xffffff80004e6c18
+	.size	xnu_world_cpuid_p23_x86, . - xnu_world_cpuid_p23_x86
+
+	.globl xnu_world_cache_p24_x86
+	.type  xnu_world_cache_p24_x86, @function
+xnu_world_cache_p24_x86:
+	endbr64
+	SITE_PROBE 24
+	pushq	%rbp
+	movq	%rsp, %rbp
+	pushq	%r15
+	pushq	%r14
+	pushq	%r13
+	JMP_XNU 0xffffff80004e6e7c
+	.size	xnu_world_cache_p24_x86, . - xnu_world_cache_p24_x86
+
+	.globl xnu_world_cache_p25_x86
+	.type  xnu_world_cache_p25_x86, @function
+xnu_world_cache_p25_x86:
+	endbr64
+	SITE_PROBE 25
+	movl	$2, %eax
+	xorl	%ebx, %ebx
+	xorl	%ecx, %ecx
+	xorl	%edx, %edx
+	cpuid
+	JMP_XNU 0xffffff80004e6ed1
+	.size	xnu_world_cache_p25_x86, . - xnu_world_cache_p25_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */

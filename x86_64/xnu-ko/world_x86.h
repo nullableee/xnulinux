@@ -89,6 +89,17 @@ void xnu_world_site9_probe_x86(void);
 void xnu_world_cpc1_probe_x86(void);
 void xnu_world_cpc2_probe_x86(void);
 void xnu_world_cpuid_probe_x86(void);
+void xnu_world_cpuid_p14_x86(void);
+void xnu_world_cpuid_p16_x86(void);
+void xnu_world_cpuid_p17_x86(void);
+void xnu_world_cpuid_p18_x86(void);
+void xnu_world_cpuid_p19_x86(void);
+void xnu_world_cpuid_p20_x86(void);
+void xnu_world_cpuid_p21_x86(void);
+void xnu_world_cpuid_p22_x86(void);
+void xnu_world_cpuid_p23_x86(void);
+void xnu_world_cache_p24_x86(void);
+void xnu_world_cache_p25_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
 /* Translate XNU virtual addresses in hook arguments to host aliases. */
