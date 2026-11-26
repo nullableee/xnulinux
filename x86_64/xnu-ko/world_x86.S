@@ -344,7 +344,32 @@ xnu_world_site3_probe_x86:
 	movq	%rbx, (%r11)
 	movabsq	$0xffffff800106f360, %r11
 	movl	(%r11), %eax
-	movabsq	$0xffffff80004efd42, %r11
+	/* Carry IdlePML4 into the saved XNU state here: site4 is deliberately
+	 * not installed in this experiment. W finds this CPU's world but
+	 * clobbers the CPUID registers, so save every live caller-saved value
+	 * first. %r11 is already sacrificial after SITE_PROBE. */
+	pushq	%rbx
+	pushq	%rcx
+	pushq	%rdx
+	pushq	%r8
+	pushq	%rax
+	W	%r8
+	movq	%r8, %r11		/* world pointer, safe in sacrificed %r11 */
+	popq	%rax			/* IdlePML4 physical address */
+	popq	%r8
+	popq	%rdx
+	popq	%rcx
+	popq	%rbx
+	movq	%rax, XW_XNU_STATE(%r11)
+	/* Phase breadcrumbs are plain writes to module data mapped by both
+	 * page tables, so they need no post-switch upcall. 70 means the CR3
+	 * write was about to execute; 71 means it completed. */
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$70, fki_x86_phase(%rip)
+	movq	%rax, %cr3
+	movq	%rax, fki_x86_phase_arg(%rip)
+	movq	$71, fki_x86_phase(%rip)
+	movabsq	$0xffffff80004efd45, %r11
 	jmp	*%r11
 	.size	xnu_world_site3_probe_x86, . - xnu_world_site3_probe_x86
 

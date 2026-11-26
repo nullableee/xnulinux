@@ -697,22 +697,10 @@ static int write_xnu_globals(void)
 					pr_warn("xnu86: site3 pattern not found\n");
 				}
 
-				/* vstart+0xf45: after set_cr3(), before upcalls. */
-				static const u8 expect4[13] = {
-				    0x4c, 0x8d, 0x35, 0x24, 0xfd, 0xb7, 0x00,
-				    0x49, 0x8b, 0x06, 0x48, 0x85, 0xc0,
-				};
-				code = xnu_va_to_host(a_vstart + 0xf45);
-
-				if (code && !memcmp(code, expect4, sizeof(expect4))) {
-					write_abs_jmp(code,
-					    (unsigned long)(uintptr_t)
-					    xnu_world_site4_probe_x86);
-					debugf("xnu86: site4 probe at 0x%llx\n",
-					    (unsigned long long)(a_vstart + 0xf45));
-				} else {
-					pr_warn("xnu86: site4 pattern not found\n");
-				}
+				/* Do not install site4 in this experiment. site3 now
+				 * performs the CR3 switch itself and leaves a phase
+				 * breadcrumb; a post-switch upcall would change the
+				 * very failure we are trying to localize. */
 			}
 		}
 
