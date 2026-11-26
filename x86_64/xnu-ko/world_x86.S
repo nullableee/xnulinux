@@ -720,6 +720,17 @@ xnu_world_wa_p34_x86:
 	JMP_XNU 0xffffff80004e8923
 	.size	xnu_world_wa_p34_x86, . - xnu_world_wa_p34_x86
 
+/* Host CPUs here do not implement the workaround MSRs (0x10a and friends), so
+ * report CWA_OFF and let XNU skip every workaround write. */
+	.globl xnu_world_wa_off_x86
+	.type  xnu_world_wa_off_x86, @function
+xnu_world_wa_off_x86:
+	endbr64
+	SITE_PROBE 34
+	movl	$4, %eax
+	ret
+	.size	xnu_world_wa_off_x86, . - xnu_world_wa_off_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */
