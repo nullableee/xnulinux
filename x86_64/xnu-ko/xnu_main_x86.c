@@ -651,31 +651,69 @@ static int write_xnu_globals(void)
 
 		/*
 		 * The host CPU is a 13th-gen Core (family 6, model 0xb7) that
-		 * this XNU tree does not list, so cpuid_set_info() takes its
-		 * cold path and panics with "Unsupported CPU".  There is no
-		 * reason to die during hosted boot: turn the call into NOPs so
-		 * the same fall-through path as a recognized CPU is taken.
+		 * this XNU tree does not list.  cpuid_set_cpufamily() therefore
+		 * leaves CPUFAMILY_UNKNOWN (0) and cpuid_set_info() panics with
+		 * "Unsupported CPU".  Make the hosted kernel treat it as an
+		 * Icelake-family CPU: force the family store and clear the
+		 * "unknown" flag, retargeting the default-path jumps that used
+		 * to converge on the original store.
 		 */
 		{
 			u64_t a_cpuid = macho_x86_sym(&img, "_cpuid_set_info");
-			u64_t a_cold = macho_x86_sym(&img, "_cpuid_set_info.cold.1");
+			u64_t a_info = macho_x86_sym(&img, "_cpuid_cpu_info");
 			u8 *code = a_cpuid ? xnu_va_to_host(a_cpuid) : NULL;
 			unsigned int i;
+			unsigned int store_off = 0;
+			u64_t store_addr = 0, case_addr = 0;
 
-			if (code && a_cold) {
-				for (i = 0; i < 0x2000 - 5; i++) {
-					u32 rel;
+			for (i = 0; code && a_info && i < 0x2000 - 8; i++) {
+				u32 rel;
+				u64_t target;
 
-					if (code[i] != 0xe8)
-						continue;
-					rel = *(u32 *)(&code[i + 1]);
-					if (a_cpuid + i + 5 + (s64)(s32)rel == a_cold) {
-						memset(&code[i], 0x90, 5);
-						debugf("xnu86: skip unsupported CPU panic at 0x%llx\n",
-						    (unsigned long long)(a_cpuid + i));
-						break;
-					}
+				if (code[i] != 0x31 || code[i + 1] != 0xdb ||
+				    code[i + 2] != 0x89 || code[i + 3] != 0x15)
+					continue;
+				rel = *(u32 *)(&code[i + 4]);
+				target = a_cpuid + i + 8 + (s64)(s32)rel;
+				if (target == a_info + 0x1a0) {
+					store_off = i;
+					store_addr = target;
+					case_addr = a_cpuid + i - 5;
+					break;
 				}
+			}
+			if (store_off >= 5) {
+				u32 disp = (u32)(store_addr -
+				    (a_cpuid + store_off + 6));
+				u8 patch[13] = {
+				    0xba, 0x47, 0x55, 0x43, 0x38,
+				    0x89, 0x15,
+				    (u8)(disp & 0xff),
+				    (u8)((disp >> 8) & 0xff),
+				    (u8)((disp >> 16) & 0xff),
+				    (u8)((disp >> 24) & 0xff),
+				    0x31, 0xdb,
+				};
+				unsigned int j;
+
+				memcpy(&code[store_off - 5], patch,
+				    sizeof(patch));
+				for (j = 0; j < 0x2000 - 2; j++) {
+					s8 rel8;
+
+					if (code[j] < 0x70 || code[j] > 0x7f)
+						continue;
+					rel8 = (s8)code[j + 1];
+					if (a_cpuid + j + 2 + rel8 !=
+					    a_cpuid + store_off + 2)
+						continue;
+					rel8 = (s8)(case_addr -
+					    (a_cpuid + j + 2));
+					code[j + 1] = (u8)rel8;
+				}
+				debugf("xnu86: map unsupported CPU to "
+				    "CPUFAMILY_INTEL_ICELAKE at 0x%llx\n",
+				    (unsigned long long)(a_cpuid + store_off));
 			}
 		}
 	}
