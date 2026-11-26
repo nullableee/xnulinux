@@ -81,6 +81,11 @@ void xnu_world_site1_probe_x86(void);
 void xnu_world_ptovirt_probe_x86(void);
 void xnu_world_site3_probe_x86(void);
 void xnu_world_site4_probe_x86(void);
+void xnu_world_site5_probe_x86(void);
+void xnu_world_site6_probe_x86(void);
+void xnu_world_site7_probe_x86(void);
+void xnu_world_site8_probe_x86(void);
+void xnu_world_site9_probe_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
 /* Translate XNU virtual addresses in hook arguments to host aliases. */

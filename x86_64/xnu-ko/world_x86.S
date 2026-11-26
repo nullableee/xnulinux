@@ -403,6 +403,77 @@ xnu_world_site3_probe_x86:
 	jmp	*%r11
 	.size	xnu_world_site3_probe_x86, . - xnu_world_site3_probe_x86
 
+/* vstart breadcrumbs after KERNEL_TABLES. Each patch covers exactly 13 bytes;
+ * the replayed instructions are the original ones, so the only added effect
+ * is one fsynced SITE_TAG upcall with the id in a1. */
+	.globl xnu_world_site5_probe_x86
+	.type  xnu_world_site5_probe_x86, @function
+xnu_world_site5_probe_x86:
+	endbr64
+	SITE_PROBE 5
+	movabsq	$0xffffff800106f378, %r11
+	movl	(%r11), %eax
+	movabsq	$0xffffff800106f428, %r11
+	movq	%r11, %rcx
+	movabsq	$0xffffff80004efda4, %r11
+	jmp	*%r11
+	.size	xnu_world_site5_probe_x86, . - xnu_world_site5_probe_x86
+
+	.globl xnu_world_site6_probe_x86
+	.type  xnu_world_site6_probe_x86, @function
+xnu_world_site6_probe_x86:
+	endbr64
+	SITE_PROBE 6
+	movq	%rax, (%rcx)
+	movl	$1, %edi
+	movabsq	$0xffffff80004e3c60, %r11	/* cpu_data_alloc */
+	call	*%r11
+	movabsq	$0xffffff80004efdb1, %r11
+	jmp	*%r11
+	.size	xnu_world_site6_probe_x86, . - xnu_world_site6_probe_x86
+
+	.globl xnu_world_site7_probe_x86
+	.type  xnu_world_site7_probe_x86, @function
+xnu_world_site7_probe_x86:
+	endbr64
+	SITE_PROBE 7
+	movq	(%rbx), %rdi
+	movabsq	$0xffffff80004e3080, %r11	/* cpu_desc_init */
+	call	*%r11
+	movq	(%rbx), %rdi
+	movabsq	$0xffffff80004e3af0, %r11	/* cpu_desc_load */
+	call	*%r11
+	movabsq	$0xffffff80004efdc8, %r11
+	jmp	*%r11
+	.size	xnu_world_site7_probe_x86, . - xnu_world_site7_probe_x86
+
+	.globl xnu_world_site8_probe_x86
+	.type  xnu_world_site8_probe_x86, @function
+xnu_world_site8_probe_x86:
+	endbr64
+	SITE_PROBE 8
+	movabsq	$0xffffff80004e3af0, %r11	/* cpu_desc_load */
+	call	*%r11
+	movq	(%rbx), %rdi
+	movabsq	$0xffffff80004e3b70, %r11	/* cpu_syscall_init */
+	call	*%r11
+	movabsq	$0xffffff80004efdd0, %r11
+	jmp	*%r11
+	.size	xnu_world_site8_probe_x86, . - xnu_world_site8_probe_x86
+
+	.globl xnu_world_site9_probe_x86
+	.type  xnu_world_site9_probe_x86, @function
+xnu_world_site9_probe_x86:
+	endbr64
+	SITE_PROBE 9
+	movq	(%rax,%rbx,8), %rax
+	movq	0x40(%rax), %rsi
+	movabsq	$0xffffff80004f8db0, %r11	/* x86_init_wrapper */
+	call	*%r11
+	movabsq	$0xffffff80004eeeb6, %r11
+	jmp	*%r11
+	.size	xnu_world_site9_probe_x86, . - xnu_world_site9_probe_x86
+
 /* vstart+0xf45, immediately after set_cr3_raw(IdlePML4). Record the new CR3
  * in this CPU's saved world state, replay leaq/mov/test, then resume at the
  * je so the following KPRINTF/KERNEL_TABLES upcalls still see the real
