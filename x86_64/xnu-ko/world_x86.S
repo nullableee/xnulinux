@@ -344,6 +344,13 @@ xnu_world_site3_probe_x86:
 	movq	%rbx, (%r11)
 	movabsq	$0xffffff800106f360, %r11
 	movl	(%r11), %eax
+	/* Is the hook already zero under the booter page tables, before CR3? */
+	pushq	%r9
+	movabsq	$0xffffff800106fa70, %r9
+	movq	(%r9), %r9
+	movq	%r9, fki_x86_phase_arg(%rip)
+	movq	$74, fki_x86_phase(%rip)
+	popq	%r9
 	/* Carry IdlePML4 into the saved XNU state here: site4 is deliberately
 	 * not installed in this experiment. W finds this CPU's world but
 	 * clobbers the CPUID registers, so save every live caller-saved value
