@@ -162,6 +162,11 @@ xnu_world_upcall_x86:
 	movq	%r15, fki_x86_phase_arg(%rip)
 	movq	$22, fki_x86_phase(%rip)
 
+	/* XNU's call site: the return address pushed by the original call.
+	 * The prologue pushed 56 bytes, so it sits at 56(%rsp). */
+	movq	56(%rsp), %rax
+	movq	%rax, xnu_upcall_ret(%rip)
+
 	movq	%r10, XW_HOOK_CALL(%r15)
 	movq	%r11, XW_HOOK_A1(%r15)
 	movq	%r12, XW_HOOK_A2(%r15)
@@ -238,6 +243,7 @@ xnu_world_hook_trampoline_x86:
 	movq	$20, fki_x86_phase(%rip)
 	movq	%rax, %cr3
 	jmp	xnu_world_upcall_x86
+	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86
 
 /*
  * Diagnostic replacement for _kprintf's first bytes. XNU calls kprintf with
@@ -255,6 +261,72 @@ xnu_world_kprintf_probe_x86:
 	xorl	%edx, %edx		/* a2 */
 	jmp	xnu_world_hook_trampoline_x86
 	.size	xnu_world_kprintf_probe_x86, . - xnu_world_kprintf_probe_x86
-	.size	xnu_world_hook_trampoline_x86, . - xnu_world_hook_trampoline_x86
+
+/*
+ * Diagnostic site probes. A patched XNU site jumps here with the original
+ * caller's return address still on the stack. We save flags and every
+ * caller-saved register, make one SITE_TAG upcall through the normal hook
+ * gate (so it is fsynced with the rest of the trace), restore, and then run
+ * the original instructions. %rbx is preserved by the upcall itself, so it
+ * can hold the unaligned stack pointer across the alignment adjustment.
+ * %r11 is deliberately not restored: no probe site uses it and it gives us
+ * a scratch register for the final absolute jump.
+ */
+	.macro SITE_PROBE id
+	pushfq
+	pushq	%rbx
+	movq	%rsp, %rbx
+	andq	$-16, %rsp
+	pushq	%rax
+	pushq	%rcx
+	pushq	%rdx
+	pushq	%rsi
+	pushq	%rdi
+	pushq	%r8
+	pushq	%r9
+	pushq	%r10
+	movl	$1001, %edi		/* LINUX64_CALL_SITE_TAG */
+	movl	$\id, %esi		/* diagnostic site id */
+	xorl	%edx, %edx
+	call	xnu_world_hook_trampoline_x86
+	popq	%r10
+	popq	%r9
+	popq	%r8
+	popq	%rdi
+	popq	%rsi
+	popq	%rdx
+	popq	%rcx
+	popq	%rax
+	movq	%rbx, %rsp
+	popq	%rbx
+	popfq
+	.endm
+
+/* vstart 0x9c4, right after doublemap_init() returns. The original two
+ * instructions (leaq master_idt64(%rip),%r9; nop) are replayed below. */
+	.globl xnu_world_site1_probe_x86
+	.type  xnu_world_site1_probe_x86, @function
+xnu_world_site1_probe_x86:
+	endbr64
+	SITE_PROBE 1
+	movabsq	$0xffffff800010c000, %r9	/* _master_idt64 */
+	movabsq	$0xffffff80004ef7d0, %r11	/* resume _vstart+0x9d0 */
+	jmp	*%r11
+	.size	xnu_world_site1_probe_x86, . - xnu_world_site1_probe_x86
+
+/* ml_static_ptovirt() entry: replay its original body, including the return
+ * to the real caller that is still on the stack. */
+	.globl xnu_world_ptovirt_probe_x86
+	.type  xnu_world_ptovirt_probe_x86, @function
+xnu_world_ptovirt_probe_x86:
+	endbr64
+	SITE_PROBE 2
+	pushq	%rbp
+	movq	%rsp, %rbp
+	movabsq	$0xffffff8000000000, %rax
+	orq	%rdi, %rax
+	popq	%rbp
+	retq
+	.size	xnu_world_ptovirt_probe_x86, . - xnu_world_ptovirt_probe_x86
 
 	.section .note.GNU-stack,"",@progbits

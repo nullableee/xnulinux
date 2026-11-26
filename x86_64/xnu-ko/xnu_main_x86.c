@@ -578,6 +578,26 @@ static u64_t x86_read_cr3(void)
 	return v;
 }
 
+/* Patch 12 bytes with movabs $target, %rax ; jmp *%rax. The image mapping and
+ * module text are far apart, so a rel32 jmp cannot reach the probe. */
+static void write_abs_jmp(void *dst, unsigned long target)
+{
+	u8 jmp[12] = {
+	    0x48, 0xb8,
+	    (u8)(target & 0xff),
+	    (u8)((target >> 8) & 0xff),
+	    (u8)((target >> 16) & 0xff),
+	    (u8)((target >> 24) & 0xff),
+	    (u8)((target >> 32) & 0xff),
+	    (u8)((target >> 40) & 0xff),
+	    (u8)((target >> 48) & 0xff),
+	    (u8)((target >> 56) & 0xff),
+	    0xff, 0xe0,
+	};
+
+	memcpy(dst, jmp, sizeof(jmp));
+}
+
 /*
  * XNU calls linux64_hook with an indirect call. The hook points to module text
  * that is mapped in both page tables; its first instruction switches CR3 back
@@ -620,32 +640,54 @@ static int write_xnu_globals(void)
 			*(u8 *)serial_va = 0xc3; /* ret: no physical COM1 on host */
 		if (kprintf_va) {
 			if (kprintf_probe) {
-				/*
-				 * The image mapping and module text are far apart
-				 * (>2 GiB), so a rel32 jmp cannot reach the probe.
-				 * Use an absolute indirect jump instead:
-				 *   movabs $probe, %rax ; jmp *%rax
-				 */
-				u64_t stub = (u64_t)(uintptr_t)xnu_world_kprintf_probe_x86;
-				u8 jmp[12] = {
-				    0x48, 0xb8,
-				    (u8)(stub & 0xff),
-				    (u8)((stub >> 8) & 0xff),
-				    (u8)((stub >> 16) & 0xff),
-				    (u8)((stub >> 24) & 0xff),
-				    (u8)((stub >> 32) & 0xff),
-				    (u8)((stub >> 40) & 0xff),
-				    (u8)((stub >> 48) & 0xff),
-				    (u8)((stub >> 56) & 0xff),
-				    0xff, 0xe0,
-				};
-
-				memcpy(kprintf_va, jmp, sizeof(jmp));
+				write_abs_jmp(kprintf_va,
+				    (unsigned long)(uintptr_t)
+				    xnu_world_kprintf_probe_x86);
 				pr_info("xnu86: kprintf probe at 0x%llx -> %p\n",
 				    (unsigned long long)a_kprintf,
 				    xnu_world_kprintf_probe_x86);
 			} else {
 				*(u8 *)kprintf_va = 0xc3; /* ret: avoid COM1 UART */
+			}
+		}
+
+		if (kprintf_probe) {
+			/* vstart+0x9c4: just after doublemap_init() returns. */
+			u64_t a_vstart = macho_x86_sym(&img, "_vstart");
+			u8 *code = a_vstart ? xnu_va_to_host(a_vstart + 0x9c4)
+			    : NULL;
+			static const u8 expect[12] = {
+			    0x4c, 0x8d, 0x0d, 0x35, 0xc8, 0xc1,
+			    0xff, 0x0f, 0x1f, 0x44, 0x00, 0x00,
+			};
+
+			if (code && !memcmp(code, expect, sizeof(expect))) {
+				write_abs_jmp(code, (unsigned long)(uintptr_t)
+				    xnu_world_site1_probe_x86);
+				debugf("xnu86: site1 probe at 0x%llx\n",
+				    (unsigned long long)(a_vstart + 0x9c4));
+			} else {
+				pr_warn("xnu86: site1 pattern not found\n");
+			}
+		}
+
+		if (kprintf_probe) {
+			/* ml_static_ptovirt(): called from the host-map loop. */
+			u64_t a_ptovirt = macho_x86_sym(&img,
+			    "_ml_static_ptovirt");
+			u8 *code = a_ptovirt ? xnu_va_to_host(a_ptovirt) : NULL;
+			static const u8 expect[12] = {
+			    0x55, 0x48, 0x89, 0xe5, 0x48, 0xb8,
+			    0x00, 0x00, 0x00, 0x00, 0x80, 0xff,
+			};
+
+			if (code && !memcmp(code, expect, sizeof(expect))) {
+				write_abs_jmp(code, (unsigned long)(uintptr_t)
+				    xnu_world_ptovirt_probe_x86);
+				debugf("xnu86: ptovirt probe at 0x%llx\n",
+				    (unsigned long long)a_ptovirt);
+			} else {
+				pr_warn("xnu86: ptovirt pattern not found\n");
 			}
 		}
 

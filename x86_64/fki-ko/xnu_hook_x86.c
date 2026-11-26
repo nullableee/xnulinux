@@ -31,14 +31,18 @@ MODULE_LICENSE("GPL");
  * rate while still returning from every upcall normally.
  */
 #define KPRINTF_LOG_INTERVAL	(HZ / 20)	/* at most 20 log lines/sec */
+#define UPCALL_TRACE_MAX	400
 
 static unsigned long n_fault, n_user_enter, n_panic, n_assert;
-static unsigned long last_kprintf_log;
+static unsigned long last_kprintf_log, n_upcall_trace;
 static xnu_hook_translate_fn hook_translate;
 
 /* Seen by the phase logger even when KPRINTF lines are rate-limited. */
 unsigned long xnu_upcall_count;
 unsigned long xnu_upcall_last;
+/* Set by the upcall trampoline: the XNU call site that made this upcall. */
+unsigned long xnu_upcall_ret;
+EXPORT_SYMBOL(xnu_upcall_ret);
 
 /*
  * The upcall switches to Linux's CR3 before running here. Any argument that
@@ -71,12 +75,41 @@ static const char *fault_name(unsigned long v)
 
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 {
-	char buf[160];
+	char buf[256], sbuf[128];
 	int n;
 	int log_upcall = 1;
 
 	xnu_upcall_last = call;
 	xnu_upcall_count++;
+
+	/*
+	 * Compact, fsynced trace of every upcall. The rate limit below only
+	 * gates the verbose dmesg line: when XNU wedges right after a kprintf
+	 * we still need the exact call site and the format string that was
+	 * printed last. Cap the total so a noisy later boot cannot flood the
+	 * log.
+	 */
+	if (n_upcall_trace < UPCALL_TRACE_MAX) {
+		n_upcall_trace++;
+		if (call == LINUX64_CALL_KPRINTF) {
+			const char *p = (const char *)(uintptr_t)hx(a1);
+
+			if (p)
+				strscpy(sbuf, p, sizeof(sbuf));
+			else
+				sbuf[0] = '\0';
+			n = snprintf(buf, sizeof(buf),
+			    "upcall#%lu call=%lu ret=0x%lx kp=[%s]\n",
+			    xnu_upcall_count, call, xnu_upcall_ret, sbuf);
+		} else {
+			n = snprintf(buf, sizeof(buf),
+			    "upcall#%lu call=%lu ret=0x%lx "
+			    "a1=0x%lx a2=0x%lx\n",
+			    xnu_upcall_count, call, xnu_upcall_ret, a1, a2);
+		}
+		if (n > 0)
+			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+	}
 
 	if (call == LINUX64_CALL_KPRINTF) {
 		const char *p = (const char *)(uintptr_t)hx(a1);
@@ -208,6 +241,11 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	case LINUX64_CALL_CPU_HALT:
 	case LINUX64_CALL_IPI:
 		/* These are handled by fki_x86_kick_cpu() on the host side. */
+		return 0;
+
+	case LINUX64_CALL_SITE_TAG:
+		/* Host-only breadcrumb from a patched XNU site; the fsynced
+		 * upcall trace above already records a1 (the site id). */
 		return 0;
 
 	default:

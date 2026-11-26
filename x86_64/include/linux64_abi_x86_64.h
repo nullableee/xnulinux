@@ -50,6 +50,7 @@ enum linux64_call {
 	LINUX64_CALL_ASSERT         = 997,
 	LINUX64_CALL_KPRINTF        = 998,
 	LINUX64_CALL_PANIC          = 999,
+	LINUX64_CALL_SITE_TAG       = 1001,	/* a1 = diagnostic site id (host-only probing) */
 	LINUX64_CALL_USER_ENTER     = 9100,	/* a1 = first user RIP */
 };
 
