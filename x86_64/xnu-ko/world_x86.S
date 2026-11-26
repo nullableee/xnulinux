@@ -731,6 +731,85 @@ xnu_world_wa_off_x86:
 	ret
 	.size	xnu_world_wa_off_x86, . - xnu_world_wa_off_x86
 
+/* cpuid_set_info() between the workaround call and the bootarg checks. */
+	.globl xnu_world_ci_p40_x86
+	.type  xnu_world_ci_p40_x86, @function
+xnu_world_ci_p40_x86:
+	endbr64
+	SITE_PROBE 40
+	movl	$0x80000000, %eax
+	xorl	%ebx, %ebx
+	xorl	%ecx, %ecx
+	xorl	%edx, %edx
+	cpuid
+	JMP_XNU 0xffffff80004e5827
+	.size	xnu_world_ci_p40_x86, . - xnu_world_ci_p40_x86
+
+	.globl xnu_world_ci_p35_x86
+	.type  xnu_world_ci_p35_x86, @function
+xnu_world_ci_p35_x86:
+	endbr64
+	SITE_PROBE 35
+	movabsq	$0xffffff80010eb110, %rbx
+	movl	$0x30, %r14d
+	movl	$0x30, %edx
+	JMP_XNU 0xffffff80004e5a2c
+	.size	xnu_world_ci_p35_x86, . - xnu_world_ci_p35_x86
+
+	.globl xnu_world_ci_p36_x86
+	.type  xnu_world_ci_p36_x86, @function
+xnu_world_ci_p36_x86:
+	endbr64
+	SITE_PROBE 36
+	movabsq	$0xffffff8000cb3d35, %r15
+	movq	%r15, %rdi
+	movabsq	$0xffffff80004b3ec0, %r11
+	call	*%r11
+	JMP_XNU 0xffffff80004e5a43
+	.size	xnu_world_ci_p36_x86, . - xnu_world_ci_p36_x86
+
+	.globl xnu_world_ci_p37_x86
+	.type  xnu_world_ci_p37_x86, @function
+xnu_world_ci_p37_x86:
+	endbr64
+	SITE_PROBE 37
+	movq	%rbx, %rdi
+	movq	%r15, %rsi
+	movq	%r14, %rdx
+	movabsq	$0xffffff80004b3f50, %r11
+	call	*%r11
+	JMP_XNU 0xffffff80004e5a5c
+	.size	xnu_world_ci_p37_x86, . - xnu_world_ci_p37_x86
+
+	.globl xnu_world_ci_p38_x86
+	.type  xnu_world_ci_p38_x86, @function
+xnu_world_ci_p38_x86:
+	endbr64
+	SITE_PROBE 38
+	movabsq	$0xffffff8000b4cf10, %r11
+	call	*%r11
+	testl	%eax, %eax
+	jne	.Lp38_taken
+	movl	$0, -0xb0(%rbp)
+	JMP_XNU 0xffffff80004e6a2b
+.Lp38_taken:
+	JMP_XNU 0xffffff80004e6a51
+	.size	xnu_world_ci_p38_x86, . - xnu_world_ci_p38_x86
+
+	.globl xnu_world_ci_p39_x86
+	.type  xnu_world_ci_p39_x86, @function
+xnu_world_ci_p39_x86:
+	endbr64
+	SITE_PROBE 39
+	movabsq	$0xffffff8000b4cf10, %r11
+	call	*%r11
+	testl	%eax, %eax
+	je	.Lp39_done
+	movl	$0, -0xb4(%rbp)
+.Lp39_done:
+	JMP_XNU 0xffffff80004e6a51
+	.size	xnu_world_ci_p39_x86, . - xnu_world_ci_p39_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */

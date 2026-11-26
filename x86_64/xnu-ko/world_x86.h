@@ -107,6 +107,12 @@ void xnu_world_wa_p29_x86(void);
 void xnu_world_wa_p33_x86(void);
 void xnu_world_wa_p34_x86(void);
 void xnu_world_wa_off_x86(void);
+void xnu_world_ci_p35_x86(void);
+void xnu_world_ci_p36_x86(void);
+void xnu_world_ci_p37_x86(void);
+void xnu_world_ci_p38_x86(void);
+void xnu_world_ci_p39_x86(void);
+void xnu_world_ci_p40_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
 /* Translate XNU virtual addresses in hook arguments to host aliases. */
