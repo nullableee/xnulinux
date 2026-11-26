@@ -331,4 +331,36 @@ xnu_world_ptovirt_probe_x86:
 	retq
 	.size	xnu_world_ptovirt_probe_x86, . - xnu_world_ptovirt_probe_x86
 
+/* vstart+0xf35, right after the host-map loop has finished. The 13 patched
+ * bytes are movq %rbx,physmap_max(%rip) and movl IdlePML4(%rip),%eax; replay
+ * them with absolute addresses because module text is too far for rel32.
+ * The following instruction is the CR3 switch we are about to make. */
+	.globl xnu_world_site3_probe_x86
+	.type  xnu_world_site3_probe_x86, @function
+xnu_world_site3_probe_x86:
+	endbr64
+	SITE_PROBE 3
+	movabsq	$0xffffff8000e8e118, %r11
+	movq	%rbx, (%r11)
+	movabsq	$0xffffff800106f360, %r11
+	movl	(%r11), %eax
+	movabsq	$0xffffff80004efd42, %r11
+	jmp	*%r11
+	.size	xnu_world_site3_probe_x86, . - xnu_world_site3_probe_x86
+
+/* vstart+0xf45, immediately after set_cr3_raw(IdlePML4). Replay leaq/mov/test
+ * and resume at the je, so the following KPRINTF/KERNEL_TABLES upcalls still
+ * see the real _linux64_hook value in %r14. */
+	.globl xnu_world_site4_probe_x86
+	.type  xnu_world_site4_probe_x86, @function
+xnu_world_site4_probe_x86:
+	endbr64
+	SITE_PROBE 4
+	movabsq	$0xffffff800106fa70, %r14
+	movq	(%r14), %rax
+	testq	%rax, %rax
+	movabsq	$0xffffff80004efd52, %r11
+	jmp	*%r11
+	.size	xnu_world_site4_probe_x86, . - xnu_world_site4_probe_x86
+
 	.section .note.GNU-stack,"",@progbits

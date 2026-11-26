@@ -694,6 +694,48 @@ static int write_xnu_globals(void)
 			}
 		}
 
+		if (kprintf_probe) {
+			u64_t a_vstart = macho_x86_sym(&img, "_vstart");
+
+			if (!a_vstart) {
+				pr_warn("xnu86: _vstart not found for site3/4\n");
+			} else {
+				/* vstart+0xf35: loop exit, before set_cr3(). */
+				static const u8 expect3[13] = {
+				    0x48, 0x89, 0x1d, 0xdc, 0xe3, 0x99, 0x00,
+				    0x8b, 0x05, 0x1e, 0xf6, 0xb7, 0x00,
+				};
+				u8 *code = xnu_va_to_host(a_vstart + 0xf35);
+
+				if (code && !memcmp(code, expect3, sizeof(expect3))) {
+					write_abs_jmp(code,
+					    (unsigned long)(uintptr_t)
+					    xnu_world_site3_probe_x86);
+					debugf("xnu86: site3 probe at 0x%llx\n",
+					    (unsigned long long)(a_vstart + 0xf35));
+				} else {
+					pr_warn("xnu86: site3 pattern not found\n");
+				}
+
+				/* vstart+0xf45: after set_cr3(), before upcalls. */
+				static const u8 expect4[13] = {
+				    0x4c, 0x8d, 0x35, 0x24, 0xfd, 0xb7, 0x00,
+				    0x49, 0x8b, 0x06, 0x48, 0x85, 0xc0,
+				};
+				code = xnu_va_to_host(a_vstart + 0xf45);
+
+				if (code && !memcmp(code, expect4, sizeof(expect4))) {
+					write_abs_jmp(code,
+					    (unsigned long)(uintptr_t)
+					    xnu_world_site4_probe_x86);
+					debugf("xnu86: site4 probe at 0x%llx\n",
+					    (unsigned long long)(a_vstart + 0xf45));
+				} else {
+					pr_warn("xnu86: site4 pattern not found\n");
+				}
+			}
+		}
+
 		/*
 		 * The host CPU is a 13th-gen Core (family 6, model 0xb7) that
 		 * this XNU tree does not list.  cpuid_set_cpufamily() therefore
