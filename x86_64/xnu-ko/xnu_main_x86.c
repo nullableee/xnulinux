@@ -791,6 +791,31 @@ static int write_xnu_globals(void)
 					}
 				}
 
+				/* cpuid_info() slow path. */
+				{
+					u64_t a_ci = macho_x86_sym(&img,
+					    "_cpuid_info");
+					static const u8 expect[13] = {
+					    0xba, 0x04, 0x00, 0x00, 0x00,
+					    0xe8, 0xd7, 0x77, 0x66, 0x00,
+					    0xe8, 0x12, 0x00,
+					};
+					u8 *at = a_ci ? xnu_va_to_host(a_ci + 0x1f)
+					    : NULL;
+
+					if (at && !memcmp(at, expect,
+					    sizeof(expect))) {
+						write_abs_jmp(at,
+						    (unsigned long)(uintptr_t)
+						    xnu_world_cpuid_probe_x86);
+						debugf("xnu86: cpuid probe at 0x%llx\n",
+						    (unsigned long long)
+						    (a_ci + 0x1f));
+					} else {
+						pr_warn("xnu86: cpuid probe pattern not found\n");
+					}
+				}
+
 				/* Do not install site4 in this experiment. site3 now
 				 * performs the CR3 switch itself and leaves a phase
 				 * breadcrumb; a post-switch upcall would change the

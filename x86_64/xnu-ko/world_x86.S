@@ -474,6 +474,23 @@ xnu_world_site9_probe_x86:
 	jmp	*%r11
 	.size	xnu_world_site9_probe_x86, . - xnu_world_site9_probe_x86
 
+/* cpuid_info() slow path: 12 before PE_parse_boot_argn(), 13 between it and
+ * cpuid_set_info(). The 13 patched bytes are mov $4,%edx plus both calls. */
+	.globl xnu_world_cpuid_probe_x86
+	.type  xnu_world_cpuid_probe_x86, @function
+xnu_world_cpuid_probe_x86:
+	endbr64
+	SITE_PROBE 12
+	movl	$4, %edx
+	movabsq	$0xffffff8000b4cf10, %r11	/* PE_parse_boot_argn */
+	call	*%r11
+	SITE_PROBE 13
+	movabsq	$0xffffff80004e5750, %r11	/* cpuid_set_info */
+	call	*%r11
+	movabsq	$0xffffff80004e573e, %r11
+	jmp	*%r11
+	.size	xnu_world_cpuid_probe_x86, . - xnu_world_cpuid_probe_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */
