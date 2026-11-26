@@ -631,6 +631,64 @@ xnu_world_cache_p25_x86:
 	JMP_XNU 0xffffff80004e6ed1
 	.size	xnu_world_cache_p25_x86, . - xnu_world_cache_p25_x86
 
+/* cpuid_wa_required() breadcrumbs. The two PE_parse_boot_argn() windows are
+ * 16 bytes long; write_abs_jmp() replaces the first 13 and the stub replays
+ * all 16 before resuming. */
+	.globl xnu_world_wa_p26_x86
+	.type  xnu_world_wa_p26_x86, @function
+xnu_world_wa_p26_x86:
+	endbr64
+	SITE_PROBE 26
+	movabsq	$0xffffff80010eb3c0, %r11
+	cmpb	$0, (%r11)
+	jne	.Lp26_taken
+	JMP_XNU 0xffffff80004e8792
+.Lp26_taken:
+	JMP_XNU 0xffffff80004e87e7
+	.size	xnu_world_wa_p26_x86, . - xnu_world_wa_p26_x86
+
+	.globl xnu_world_wa_p27_x86
+	.type  xnu_world_wa_p27_x86, @function
+xnu_world_wa_p27_x86:
+	endbr64
+	SITE_PROBE 27
+	movabsq	$0xffffff8000b4cf10, %r11
+	call	*%r11
+	testl	%eax, %eax
+	jne	.Lp27_done
+	movabsq	$0xffffff80010eb3b0, %r11
+	movq	$0, (%r11)
+.Lp27_done:
+	JMP_XNU 0xffffff80004e87b9
+	.size	xnu_world_wa_p27_x86, . - xnu_world_wa_p27_x86
+
+	.globl xnu_world_wa_p28_x86
+	.type  xnu_world_wa_p28_x86, @function
+xnu_world_wa_p28_x86:
+	endbr64
+	SITE_PROBE 28
+	movabsq	$0xffffff8000b4cf10, %r11
+	call	*%r11
+	testl	%eax, %eax
+	jne	.Lp28_done
+	movabsq	$0xffffff80010eb3b8, %r11
+	movq	$0, (%r11)
+.Lp28_done:
+	JMP_XNU 0xffffff80004e87e0
+	.size	xnu_world_wa_p28_x86, . - xnu_world_wa_p28_x86
+
+	.globl xnu_world_wa_p29_x86
+	.type  xnu_world_wa_p29_x86, @function
+xnu_world_wa_p29_x86:
+	endbr64
+	SITE_PROBE 29
+	movl	$0x10a, %ecx
+	rdmsr
+	movl	%eax, %ecx
+	movl	$4, %eax
+	JMP_XNU 0xffffff80004e884f
+	.size	xnu_world_wa_p29_x86, . - xnu_world_wa_p29_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */
