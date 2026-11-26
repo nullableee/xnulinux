@@ -639,13 +639,14 @@ xnu_world_cache_p25_x86:
 	.type  xnu_world_wa_p26_x86, @function
 xnu_world_wa_p26_x86:
 	endbr64
-	SITE_PROBE 26
 	movabsq	$0xffffff80010eb3c0, %r11
 	cmpb	$0, (%r11)
 	jne	.Lp26_taken
+	SITE_PROBE 26
 	movabsq	$0xffffff8000cb3ece, %rdi
 	JMP_XNU 0xffffff80004e8799
 .Lp26_taken:
+	SITE_PROBE 30
 	JMP_XNU 0xffffff80004e87e7
 	.size	xnu_world_wa_p26_x86, . - xnu_world_wa_p26_x86
 
@@ -690,6 +691,34 @@ xnu_world_wa_p29_x86:
 	movl	$4, %eax
 	JMP_XNU 0xffffff80004e884f
 	.size	xnu_world_wa_p29_x86, . - xnu_world_wa_p29_x86
+
+	.globl xnu_world_wa_p33_x86
+	.type  xnu_world_wa_p33_x86, @function
+xnu_world_wa_p33_x86:
+	endbr64
+	SITE_PROBE 33
+	movl	$7, %eax
+	xorl	%ebx, %ebx
+	xorl	%ecx, %ecx
+	xorl	%edx, %edx
+	cpuid
+	JMP_XNU 0xffffff80004e8882
+	.size	xnu_world_wa_p33_x86, . - xnu_world_wa_p33_x86
+
+	.globl xnu_world_wa_p34_x86
+	.type  xnu_world_wa_p34_x86, @function
+xnu_world_wa_p34_x86:
+	endbr64
+	SITE_PROBE 34
+	movl	$0x10a, %ecx
+	rdmsr
+	testb	$0x10, %bl
+	je	.Lp34_exit
+	movl	%eax, %ecx
+	JMP_XNU 0xffffff80004e88c2
+.Lp34_exit:
+	JMP_XNU 0xffffff80004e8923
+	.size	xnu_world_wa_p34_x86, . - xnu_world_wa_p34_x86
 
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
