@@ -1161,6 +1161,10 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	 * into hw_lock_init/memcpy/the trap stubs execute host RAM instead of
 	 * the image. Reinstall those pages through host_map, which
 	 * Idle_PTs_init() copies into the new tables before switching.
+	 *
+	 * macho_x86_copy() places segment file bytes at (vmaddr - vmlow), so
+	 * __HIB's VA base is vmlow, not XNU_VM_MIN_KERNEL. Using the latter
+	 * remapped the wrong 1 MB range and left _hw_lock_init untouched.
 	 */
 	{
 		static const unsigned int hib_data_pages[] = {
@@ -1171,13 +1175,14 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 
 		for (p = 0; p < 0x40; p++) {
 			u64_t off = (u64_t)p << PAGE_SHIFT;
-			record_host_map(XNU_VM_MIN_KERNEL + off, kc_pa + off);
+			record_host_map(vmlow + off, kc_pa + off);
 		}
 		for (i = 0; i < ARRAY_SIZE(hib_data_pages); i++) {
 			u64_t off = (u64_t)hib_data_pages[i] << PAGE_SHIFT;
-			record_host_map(XNU_VM_MIN_KERNEL + off, kc_pa + off);
+			record_host_map(vmlow + off, kc_pa + off);
 		}
-		debugf("loader: mapped %u host pages after CR3 switch\n",
+		debugf("loader: remapped __HIB va=0x%llx pa=0x%llx (%u pages)\n",
+		    (unsigned long long)vmlow, (unsigned long long)kc_pa,
 		    host_map_store.count);
 	}
 	/* Preserve the static aliases of our boot structures across CR3 switches.
