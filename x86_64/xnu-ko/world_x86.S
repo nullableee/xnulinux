@@ -694,6 +694,7 @@ xnu_world_cache_p24_x86:
 	pushq	%r15
 	pushq	%r14
 	pushq	%r13
+	pushq	%r12
 	pushq	%rbx
 	JMP_XNU 0xffffff80004e6e7d
 	.size	xnu_world_cache_p24_x86, . - xnu_world_cache_p24_x86
