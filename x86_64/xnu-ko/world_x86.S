@@ -540,7 +540,10 @@ xnu_world_cpuid_p18_x86:
 	SITE_PROBE 18
 	movabsq	$0xffffff80010eb360, %r11
 	cmpl	$0, (%r11)
-	JMP_XNU 0xffffff80004e6adb
+	jne	.Lp18_taken
+	JMP_XNU 0xffffff80004e6bdc
+.Lp18_taken:
+	JMP_XNU 0xffffff80004e6b5a
 	.size	xnu_world_cpuid_p18_x86, . - xnu_world_cpuid_p18_x86
 
 	/* MSR_CORE_THREAD_COUNT (0x35) is not implemented on modern hosts.
@@ -551,7 +554,8 @@ xnu_world_cpuid_p19_x86:
 	endbr64
 	SITE_PROBE 19
 	movl	$0x10001, %ecx
-	JMP_XNU 0xffffff80004e6b1a
+	movzwl	%cx, %eax
+	JMP_XNU 0xffffff80004e6b1d
 	.size	xnu_world_cpuid_p19_x86, . - xnu_world_cpuid_p19_x86
 
 	.globl xnu_world_cpuid_p20_x86
@@ -560,7 +564,8 @@ xnu_world_cpuid_p20_x86:
 	endbr64
 	SITE_PROBE 20
 	movl	$0x10001, %ecx
-	JMP_XNU 0xffffff80004e6b36
+	movzwl	%cx, %eax
+	JMP_XNU 0xffffff80004e6b39
 	.size	xnu_world_cpuid_p20_x86, . - xnu_world_cpuid_p20_x86
 
 	.globl xnu_world_cpuid_p21_x86
@@ -595,10 +600,11 @@ xnu_world_cpuid_p23_x86:
 	movabsq	$0xffffff80010b3218, %r11
 	movq	(%r11), %rax
 	cmpq	-0x30(%rbp), %rax
-	je	.Lp23_done
+	jne	.Lp23_fail
+	addq	$0x98, %rsp
+	JMP_XNU 0xffffff80004e6c1f
+.Lp23_fail:
 	JMP_XNU 0xffffff80004e6c2f
-.Lp23_done:
-	JMP_XNU 0xffffff80004e6c18
 	.size	xnu_world_cpuid_p23_x86, . - xnu_world_cpuid_p23_x86
 
 	.globl xnu_world_cache_p24_x86
