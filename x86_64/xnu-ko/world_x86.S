@@ -631,7 +631,11 @@ xnu_world_cpuid_p59_x86:
 	cmpq	-0x30(%rbp), %rax
 	jne	.Lp59_fail
 	addq	$0x98, %rsp
-	SITE_PROBE 59
+	jmp	.Lp59_continue
+.Lp59_fail:
+	SITE_PROBE 60
+	addq	$0x98, %rsp
+.Lp59_continue:
 	popq	%rbx
 	popq	%r12
 	popq	%r13
@@ -641,8 +645,6 @@ xnu_world_cpuid_p59_x86:
 	addq	$8, %rsp		/* discard the cpuid probe's return address */
 	movabsq	$xnu_world_cpuid_probe_after_info_x86, %r11
 	jmp	*%r11
-.Lp59_fail:
-	JMP_XNU 0xffffff80004e6c2f
 	.size	xnu_world_cpuid_p59_x86, . - xnu_world_cpuid_p59_x86
 
 	.globl xnu_world_cache_p24_x86
