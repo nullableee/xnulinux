@@ -694,6 +694,36 @@ xnu_world_cache_p48_x86:
 	JMP_XNU 0xffffff80004e71dd
 	.size	xnu_world_cache_p48_x86, . - xnu_world_cache_p48_x86
 
+/* Entry to leaf-2 TLB descriptor extraction (startup_debug == 0 path). */
+	.globl xnu_world_cache_p52_x86
+	.type  xnu_world_cache_p52_x86, @function
+xnu_world_cache_p52_x86:
+	endbr64
+	SITE_PROBE 52
+	movl	$1, %r15d
+	movabsq	$0xffffff8000dbcdf0, %r12
+	JMP_XNU 0xffffff80004e7479
+	.size	xnu_world_cache_p52_x86, . - xnu_world_cache_p52_x86
+
+/* Final cpuid_info pointer check before the epilogue. id53 means the saved
+ * pointer no longer matches, which would send XNU to __stack_chk_fail. */
+	.globl xnu_world_cache_p50_x86
+	.type  xnu_world_cache_p50_x86, @function
+xnu_world_cache_p50_x86:
+	endbr64
+	SITE_PROBE 50
+	movabsq	$0xffffff80010b3218, %r11
+	movq	(%r11), %rax
+	cmpq	-0x30(%rbp), %rax
+	jne	.Lp50_bad
+	testl	%r14d, %r14d
+	JMP_XNU 0xffffff80004e75b7
+.Lp50_bad:
+	SITE_PROBE 53
+	testl	%r14d, %r14d
+	JMP_XNU 0xffffff80004e75b7
+	.size	xnu_world_cache_p50_x86, . - xnu_world_cache_p50_x86
+
 /* cpuid_wa_required() breadcrumbs. The two PE_parse_boot_argn() windows are
  * 16 bytes long; write_abs_jmp() replaces the first 13 and the stub replays
  * all 16 before resuming. */
