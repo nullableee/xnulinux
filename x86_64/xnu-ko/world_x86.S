@@ -724,8 +724,9 @@ xnu_world_cache_p50_x86:
 	JMP_XNU 0xffffff80004e75b7
 	.size	xnu_world_cache_p50_x86, . - xnu_world_cache_p50_x86
 
-/* Canary check / epilogue, immediately after the id50 window. Replays the
- * compare, the failure branch, and the first two pops before resuming. */
+/* Canary check / epilogue, immediately after the id50 window. Replay the
+ * whole epilogue here and continue straight to cpuid_set_info()+0x143d,
+ * bypassing the SITE_PROBE 45 upcall on the p44 stub's return path. */
 	.globl xnu_world_cache_p54_x86
 	.type  xnu_world_cache_p54_x86, @function
 xnu_world_cache_p54_x86:
@@ -736,7 +737,13 @@ xnu_world_cache_p54_x86:
 	addq	$0x48, %rsp
 	popq	%rbx
 	popq	%r12
-	JMP_XNU 0xffffff80004e75e8
+	popq	%r13
+	popq	%r14
+	popq	%r15
+	popq	%rbp
+	addq	$8, %rsp		/* discard p44 stub's return address */
+	SITE_PROBE 56
+	JMP_XNU 0xffffff80004e6b4d
 .Lp54_bad:
 	JMP_XNU 0xffffff80004e75f0
 	.size	xnu_world_cache_p54_x86, . - xnu_world_cache_p54_x86
