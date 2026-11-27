@@ -810,6 +810,16 @@ xnu_world_ci_p39_x86:
 	JMP_XNU 0xffffff80004e6a51
 	.size	xnu_world_ci_p39_x86, . - xnu_world_ci_p39_x86
 
+/* _strlcpy() entry, used by cpuid_set_generic_info() right after p35. */
+	.globl xnu_world_strlcpy_p41_x86
+	.type  xnu_world_strlcpy_p41_x86, @function
+xnu_world_strlcpy_p41_x86:
+	endbr64
+	SITE_PROBE 41
+	xorl	%eax, %eax
+	JMP_XNU 0xffffff80004b4750
+	.size	xnu_world_strlcpy_p41_x86, . - xnu_world_strlcpy_p41_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */
