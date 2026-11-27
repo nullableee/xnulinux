@@ -748,20 +748,18 @@ xnu_world_cache_p54_x86:
 	JMP_XNU 0xffffff80004e75f0
 	.size	xnu_world_cache_p54_x86, . - xnu_world_cache_p54_x86
 
-/* Right after the second cpuid_set_cache_info() call returns in
- * cpuid_set_info(). This proves whether the call itself completed. */
-	.globl xnu_world_ci_p55_x86
-	.type  xnu_world_ci_p55_x86, @function
-xnu_world_ci_p55_x86:
+/* cpc_early_init() right after cpuid_info() returns. */
+	.globl xnu_world_cpc_p57_x86
+	.type  xnu_world_cpc_p57_x86, @function
+xnu_world_cpc_p57_x86:
 	endbr64
-	SITE_PROBE 55
-	movabsq	$0xffffff80010eb360, %r11
-	cmpl	$0, (%r11)
-	je	.Lp55_taken
-	JMP_XNU 0xffffff80004e6b5a
-.Lp55_taken:
-	JMP_XNU 0xffffff80004e6bdc
-	.size	xnu_world_ci_p55_x86, . - xnu_world_ci_p55_x86
+	SITE_PROBE 57
+	cmpb	$0x2, 0x138(%rax)
+	jb	.Lp57_taken
+	JMP_XNU 0xffffff8000512fd0
+.Lp57_taken:
+	JMP_XNU 0xffffff8000513087
+	.size	xnu_world_cpc_p57_x86, . - xnu_world_cpc_p57_x86
 
 /* cpuid_wa_required() breadcrumbs. The two PE_parse_boot_argn() windows are
  * 16 bytes long; write_abs_jmp() replaces the first 13 and the stub replays

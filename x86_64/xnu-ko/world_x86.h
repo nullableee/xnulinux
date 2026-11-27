@@ -121,7 +121,7 @@ void xnu_world_cache_p49_x86(void);
 void xnu_world_cache_p50_x86(void);
 void xnu_world_cache_p52_x86(void);
 void xnu_world_cache_p54_x86(void);
-void xnu_world_ci_p55_x86(void);
+void xnu_world_cpc_p57_x86(void);
 /* Linux-world handler: 0 resumes XNU, nonzero ends the run. */
 long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2);
 /* Translate XNU virtual addresses in hook arguments to host aliases. */
