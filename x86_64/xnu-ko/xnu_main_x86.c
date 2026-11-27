@@ -702,26 +702,27 @@ static int write_xnu_globals(void)
 				{
 					static const struct {
 						u64_t off;
+						u8 id;
 						const u8 expect[13];
 						void (*probe)(void);
 					} sites[] = {
-					    { 0xf97, {
+					    { 0xf97, 5, {
 						0x8b, 0x05, 0xdb, 0xf5, 0xb7, 0x00,
 						0x48, 0x8d, 0x0d, 0x84, 0xf6, 0xb7, 0x00 },
 						    xnu_world_site5_probe_x86 },
-					    { 0xfa4, {
+					    { 0xfa4, 6, {
 						0x48, 0x89, 0x01, 0xbf, 0x01, 0x00,
 						0x00, 0x00, 0xe8, 0xaf, 0x3e, 0xff, 0xff },
 						    xnu_world_site6_probe_x86 },
-					    { 0xfbb, {
+					    /* site7 replays cpu_desc_init/load/syscall_init
+					     * and resumes at vstart+0xfd0.  A separate site8
+					     * patch overlaps this 13-byte jump and can never
+					     * match its original pattern after site7 is in. */
+					    { 0xfbb, 7, {
 						0xe8, 0xc0, 0x32, 0xff, 0xff, 0x48,
 						0x8b, 0x3b, 0xe8, 0x28, 0x3d, 0xff, 0xff },
 						    xnu_world_site7_probe_x86 },
-					    { 0xfc3, {
-						0xe8, 0x28, 0x3d, 0xff, 0xff, 0x48,
-						0x8b, 0x3b, 0xe8, 0xa0, 0x3d, 0xff, 0xff },
-						    xnu_world_site8_probe_x86 },
-					    { 0xea9, {
+					    { 0xea9, 9, {
 						0x48, 0x8b, 0x04, 0xd8, 0x48, 0x8b,
 						0x70, 0x40, 0xe8, 0xfa, 0x9e, 0x00, 0x00 },
 						    xnu_world_site9_probe_x86 },
@@ -737,12 +738,12 @@ static int write_xnu_globals(void)
 							    (unsigned long)(uintptr_t)
 							    sites[s].probe);
 							debugf("xnu86: trace site %u at 0x%llx\n",
-							    s + 5,
+							    sites[s].id,
 							    (unsigned long long)
 							    (a_vstart + sites[s].off));
 						} else {
 							pr_warn("xnu86: trace site %u pattern not found\n",
-							    s + 5);
+							    sites[s].id);
 						}
 					}
 				}

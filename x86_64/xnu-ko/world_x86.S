@@ -473,10 +473,16 @@ xnu_world_site7_probe_x86:
 	movq	(%rbx), %rdi
 	movabsq	$0xffffff80004e3080, %r11	/* cpu_desc_init */
 	call	*%r11
+	SITE_PROBE 65		/* cpu_desc_init returned */
 	movq	(%rbx), %rdi
 	movabsq	$0xffffff80004e3af0, %r11	/* cpu_desc_load */
 	call	*%r11
-	movabsq	$0xffffff80004efdc8, %r11
+	SITE_PROBE 66		/* cpu_desc_load returned */
+	movq	(%rbx), %rdi
+	movabsq	$0xffffff80004e3b70, %r11	/* cpu_syscall_init */
+	call	*%r11
+	SITE_PROBE 8		/* cpu_syscall_init returned */
+	movabsq	$0xffffff80004efdd0, %r11
 	jmp	*%r11
 	.size	xnu_world_site7_probe_x86, . - xnu_world_site7_probe_x86
 
