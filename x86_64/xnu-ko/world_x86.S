@@ -726,6 +726,7 @@ xnu_world_ci_p44_x86:
 	movabsq	$0xffffff80004e6e70, %r11
 	call	*%r11
 	SITE_PROBE 45
+	SITE_PROBE 62
 	JMP_XNU 0xffffff80004e6b4d
 	.size	xnu_world_ci_p44_x86, . - xnu_world_ci_p44_x86
 
