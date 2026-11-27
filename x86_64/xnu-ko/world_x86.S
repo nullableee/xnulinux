@@ -492,7 +492,8 @@ xnu_world_site7_probe_x86:
  * `call cpu_desc_load`), so split the 13-byte patches at instruction boundaries and
  * replay the overwritten instructions in each stub.  SITE_PROBE runs first:
  * even if the replayed instruction faults, the trace still shows how far we
- * got.  %r11 is scratch, as with all write_abs_jmp() sites.
+ * got.  %r11 is scratch, as with all write_abs_jmp() sites.  The final stub
+ * separates LDT (0x46), TSS (0x47) and the return (0x48).
  */
 	.globl xnu_world_desc_p67_x86
 	.type  xnu_world_desc_p67_x86, @function
@@ -534,8 +535,10 @@ xnu_world_desc_p70_x86:
 	SITE_PROBE 70			/* about to load LDT/TSS */
 	movabsq	$0xffffff8000dbcde0, %r11
 	lldt	(%r11)
+	SITE_PROBE 71			/* LDT loaded, about to load TSS */
 	movabsq	$0xffffff8000dbcde2, %r11
 	ltr	(%r11)
+	SITE_PROBE 72			/* TSS loaded, returning from cpu_desc_load */
 	movabsq	$0xffffff80004e3b6d, %r11
 	jmp	*%r11
 	.size	xnu_world_desc_p70_x86, . - xnu_world_desc_p70_x86

@@ -750,7 +750,8 @@ static int write_xnu_globals(void)
 
 				/* cpu_desc_load() is where the trace stops after 0x41.
 				 * Four disjoint 13-byte windows bracket the descriptor
-				 * setup: GS/GSBASE, cdi mask/size, GDT/IDT, LDT/TSS. */
+				 * setup: GS/GSBASE, cdi mask/size, GDT/IDT, LDT/TSS.
+				 * The LDT/TSS stub adds 0x47/0x48 for lldt/ltr/return. */
 				{
 					u64_t a_cdl = macho_x86_sym(&img, "_cpu_desc_load");
 
