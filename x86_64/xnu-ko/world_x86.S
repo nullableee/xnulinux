@@ -555,6 +555,7 @@ xnu_world_cpuid_p19_x86:
 	SITE_PROBE 19
 	movl	$0x10001, %ecx
 	movzwl	%cx, %eax
+	SITE_PROBE 46
 	JMP_XNU 0xffffff80004e6b1d
 	.size	xnu_world_cpuid_p19_x86, . - xnu_world_cpuid_p19_x86
 
@@ -633,6 +634,65 @@ xnu_world_cache_p25_x86:
 	cpuid
 	JMP_XNU 0xffffff80004e6ed1
 	.size	xnu_world_cache_p25_x86, . - xnu_world_cache_p25_x86
+
+/* Intel core/thread store block just before the second cache-info call.
+ * The 13-byte window eats the first byte of the call, so replay it here. */
+	.globl xnu_world_ci_p44_x86
+	.type  xnu_world_ci_p44_x86, @function
+xnu_world_ci_p44_x86:
+	endbr64
+	SITE_PROBE 44
+	movabsq	$0xffffff80010eb290, %r11
+	movl	%ecx, (%r11)
+	movabsq	$0xffffff80010eb294, %r11
+	movl	%eax, (%r11)
+	movabsq	$0xffffff80004e6e70, %r11
+	call	*%r11
+	SITE_PROBE 45
+	JMP_XNU 0xffffff80004e6b4d
+	.size	xnu_world_ci_p44_x86, . - xnu_world_ci_p44_x86
+
+/* After leaf-2 descriptor loop, right before the cpuid(0) deterministic
+ * check. Replay the five original instructions and resume at 0x70f0. */
+	.globl xnu_world_cache_p47_x86
+	.type  xnu_world_cache_p47_x86, @function
+xnu_world_cache_p47_x86:
+	endbr64
+	SITE_PROBE 47
+	xorl	%eax, %eax
+	xorl	%ebx, %ebx
+	xorl	%ecx, %ecx
+	xorl	%edx, %edx
+	cpuid
+	movl	%eax, %r13d
+	JMP_XNU 0xffffff80004e70f0
+	.size	xnu_world_cache_p47_x86, . - xnu_world_cache_p47_x86
+
+/* Common path after the deterministic cache loop. */
+	.globl xnu_world_cache_p49_x86
+	.type  xnu_world_cache_p49_x86, @function
+xnu_world_cache_p49_x86:
+	endbr64
+	SITE_PROBE 49
+	movabsq	$0xffffff80010eb184, %r11
+	movl	%ebx, (%r11)
+	movabsq	$0xffffff80010eb360, %r11
+	cmpl	$0, (%r11)
+	JMP_XNU 0xffffff80004e7171
+	.size	xnu_world_cache_p49_x86, . - xnu_world_cache_p49_x86
+
+/* Inside the deterministic cache loop, just after cpuid(4,%ecx). */
+	.globl xnu_world_cache_p48_x86
+	.type  xnu_world_cache_p48_x86, @function
+xnu_world_cache_p48_x86:
+	endbr64
+	SITE_PROBE 48
+	movl	%eax, %r13d
+	movl	%ecx, %r15d
+	movabsq	$0xffffff80010eb360, %r11
+	cmpl	$0, (%r11)
+	JMP_XNU 0xffffff80004e71dd
+	.size	xnu_world_cache_p48_x86, . - xnu_world_cache_p48_x86
 
 /* cpuid_wa_required() breadcrumbs. The two PE_parse_boot_argn() windows are
  * 16 bytes long; write_abs_jmp() replaces the first 13 and the stub replays
