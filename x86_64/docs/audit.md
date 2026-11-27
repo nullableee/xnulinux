@@ -87,8 +87,12 @@
 - [x] Первое уведомление о входе в ring 3 (`LINUX64_CALL_USER_ENTER`)
 - [x] Secondary CPU startup через `cpu_desc_load()` + `i386_init_slave()`
 - [x] Синтез x86 `boot_args` (4096 байт) в `xnu-ko/boot_args_x86.c`
-- [x] Скрипты fetch/build stock XNU 26.5 x86_64
-- [ ] Проверка реальной сборки stock x86_64 KC (нужны clang/lld + macOS SDK)
+- [x] Скрипты fetch/build stock XNU 26.5 x86_64; KC собран CI и используется как `/lib/firmware/xnu26.kernel`
+- [x] Host loader X86 (`xnu_main_x86.c`): KC, символы, миры, `linux64_hook`, `__HIB` по `vmlow`
+- [x] Патчи `0007`–`0012`: build env, SDK stubs, remap страниц и трассировка `vstart()`
+- [x] Первый вывод через пропатченный `_kprintf` upcall
+- [x] Трассировка раннего `vstart()` → `i386_init()` через `kprintf_probe=1` (см. `boot-debug.md`)
+- [ ] Прохождение `cpu_desc_load()` (`lldt`/`ltr`/возврат) и достижение `kprintf initialized`
 - [ ] Реальная инъекция IRQ/timer и полный user-entry path
-- [ ] Host loader X86 (`xnu_main_x86.c`): KC, символы, миры, `linux64_hook`
+- [ ] Хост-вызовы диска/ramdisk (`820/821`, `994/995`) и APFS
 - [ ] macOS 26 Intel disk

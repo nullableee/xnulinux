@@ -4,7 +4,7 @@
 
 This repository is a fork of [AFK-surf/xnulinux](https://github.com/AFK-surf/xnulinux). The upstream project hosts Apple's XNU kernel as a loadable module inside arm64 Linux. This fork keeps that ARM64 codebase as its baseline and adds a separate, experimental **x86_64 port** under `x86_64/`.
 
-> **Current state: WIP / proof of concept.** The x86_64 work has buildable Linux modules and a CI-built XNU kernel artifact, but a complete macOS-on-Linux boot on x86_64 has not been demonstrated. Do not treat this branch as a usable macOS replacement or a production hypervisor.
+> **Current state: WIP / proof of concept.** The x86_64 work has buildable Linux modules, a CI-built XNU kernel artifact, the first `kprintf` upcall output and instrumented early `vstart()`/`i386_init()` execution. The boot currently stalls in CPU descriptor setup; a complete macOS-on-Linux boot on x86_64 has not been demonstrated. Do not treat this branch as a usable macOS replacement or a production hypervisor.
 
 ## What this project is
 
@@ -33,18 +33,20 @@ macOS 27 is Apple-silicon-only, so the x86_64 path targets macOS 26 rather than 
 - Separate x86_64 ABI headers and FKI-X86 v1 host interface.
 - Initial Linux/XNU world-switch implementation, including register/stack state and host upcalls.
 - x86_64 exception handoff scaffolding for `#PF`, `#GP`, `#UD` and `#SS`.
-- XNU x86_64 patch series (`0001`–`0010`) and scripts to fetch/build the matching XNU source.
-- Initial Mach-O/kernel-collection loader and synthesized x86 boot-arguments code.
+- XNU x86_64 patch series (`0001`–`0012`) and scripts to fetch/build the matching XNU source.
+- Mach-O/kernel-collection loader and synthesized x86 boot-arguments code.
+- Instrumented early boot path (`kprintf_probe=1`): numbered `SITE_TAG` upcalls through `vstart()`, `i386_init()` and `cpu_desc_load()`; see [boot debug notes](x86_64/docs/boot-debug.md).
+- First `kprintf` output through the patched upcall, reached before the current stall.
 - GitHub Actions workflow for building the patched XNU kernel on an Intel macOS runner.
-- CI currently reports successful runs for both the hosted-XNU build and the Linux-module workflow.
 
 These are implementation and build milestones, **not proof of a successful end-to-end boot**. A successful kernel build or module build does not establish that XNU can safely take over the CPU, reach user space, or run a complete macOS installation.
 
 ### Current blockers / not yet demonstrated
 
+- Getting past `cpu_desc_load()` (LDT/TSS load and return) in early `i386_init()`, then reaching `kprintf initialized`.
 - A complete x86_64 XNU boot through to a working macOS 26 userland.
-- Reliable interrupt and timer delivery, full ring-3 execution and the remaining host-device paths.
-- A matching macOS 26 Intel system disk and its required boot assets.
+- Reliable interrupt and timer delivery, full ring-3 execution and the remaining host-device paths; host disk/ramdisk calls are declared in the ABI but not yet implemented.
+- A matching macOS 26 Intel system disk, its boot assets and APFS access.
 - End-to-end validation of the loader, kernel collection and runtime on real supported hardware.
 
 Graphics (framebuffer/i915 first, then Vulkan/Metal) is a later-stage task, not part of the current baseline.
@@ -53,6 +55,7 @@ For the detailed engineering checklist and known gaps, see:
 - [x86_64 implementation notes](x86_64/README.md)
 - [x86_64 porting audit and stage status](x86_64/docs/audit.md)
 - [x86_64 build prerequisites](x86_64/docs/build-prereqs.md)
+- [x86_64 early-boot debug notes](x86_64/docs/boot-debug.md)
 
 ## Build status
 
@@ -63,7 +66,7 @@ The repository currently has two distinct build tracks:
 | `build-hosted-xnu-x86_64` | Applies the x86_64 patch series and builds the hosted XNU kernel on an Intel macOS runner | Successful runtime boot or usable macOS userland |
 | `modules` | Builds/checks the Linux kernel modules in CI | Correctness of the full XNU world switch at runtime |
 
-See [GitHub Actions](https://github.com/nullableee/xnulinux/actions) for the latest run status and artifacts. Artifacts are temporary CI outputs, not a ready-to-install release.
+See [GitHub Actions](https://github.com/nullableee/xnulinux-x86_64/actions) for the latest run status and artifacts. Artifacts are temporary CI outputs, not a ready-to-install release.
 
 ## Upstream relationship
 
@@ -71,7 +74,7 @@ Upstream: [AFK-surf/xnulinux](https://github.com/AFK-surf/xnulinux)
 
 The fork's `main` has diverged from upstream `main`; it contains fork-specific commits and is also missing upstream commits. The fork-specific additions are concentrated in `x86_64/` and the `build-hosted-xnu-x86_64` workflow.
 
-The exact ahead/behind counts change as either branch moves, so use the live [branch comparison](https://github.com/nullableee/xnulinux/compare/AFK-surf:main...main) for current numbers before rebasing or merging. This is not a clean, continuously synchronized mirror. In particular, do not assume upstream ARM64 changes are automatically present in this fork.
+The exact ahead/behind counts change as either branch moves, so use the live [branch comparison](https://github.com/nullableee/xnulinux-x86_64/compare/AFK-surf:main...main) for current numbers before rebasing or merging. This is not a clean, continuously synchronized mirror. In particular, do not assume upstream ARM64 changes are automatically present in this fork.
 
 ## Requirements and legal notes
 
@@ -95,4 +98,4 @@ This project is not affiliated with or endorsed by Apple. macOS, XNU and Metal a
 
 ---
 
-**Status summary:** ARM64 is the inherited upstream implementation; x86_64 is the active experimental fork-specific WIP. The current milestone is build infrastructure and the first hosting/loader scaffolding — not a complete Intel macOS boot.
+**Status summary:** ARM64 is the inherited upstream implementation; x86_64 is the active experimental fork-specific WIP. The current milestone is instrumented early boot (`vstart()` → `i386_init()`), with execution stopping in `cpu_desc_load()` — not a complete Intel macOS boot.

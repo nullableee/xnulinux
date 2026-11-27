@@ -9,7 +9,7 @@ Apply in order to a pristine source tree:
 for p in x86_64/patches/0*.patch; do git apply "$p"; done
 ```
 
-All ten patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
+All twelve patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
 (verified with a detached worktree at the baseline commit).
 
 | # | File | Contents | Status |
@@ -24,14 +24,17 @@ All ten patches apply cleanly, in order, to the stock `xnu-12377.121.6` tree
 | 0008 | `0008-skip-driverkit-exporthdrs.patch` | Skip iig-generated DriverKit header export on CLT runners | applied OK |
 | 0009 | `0009-trustcache-api-stub.patch` | Minimal `TrustCache/API.h` stub for missing SDK header | applied OK |
 | 0010 | `0010-sdk-header-stubs.patch` | Minimal CodeSignature, CoreEntitlements V2, generated DriverKit and libfirehose header stubs | applied OK |
+| 0011 | `0011-linux64-x86-idle-pts-image-map.patch` | Copy host mappings into `IdlePML4` and remap `__TEXT` onward, including `__HIB` at `vmlow` | applied OK |
+| 0012 | `0012-linux64-x86-vstart-trace.patch` | Early `vstart()` trace hooks used with `kprintf_probe=1` | applied OK |
 
 ## Still missing after this series
 
-- x86 `boot_args` synthesis in the host (EFI memory map, `kaddr/ksize`, `KC_hdrs_vaddr`, APFS keys) — C code exists, not wired to a loader yet.
+- Getting through `cpu_desc_load()` in early `i386_init()`; see
+  `../docs/boot-debug.md` for the current trace and probe ids.
 - Real interrupt/timer injection (currently virtual IF + host calls only).
 - Full ring-3 execution path (the notification exists; XNU's own `ret_to_user` still has to be exercised with real user mappings).
-- Host loader (`xnu_main_x86.c`): load the KC, find `_linux64_cpu_entry`/`_cpu_data_ptr`, allocate worlds and set `linux64_hook`.
-- macOS 26 Intel userland disk and kernel collection.
+- Host disk/ramdisk calls in `xnu_hook_x86.c` (call numbers `820/821` and `994/995` are declared but not dispatched).
+- macOS 26 Intel userland disk, APFS access and matching kernel collection.
 
 ## Rules
 

@@ -28,10 +28,11 @@ and a separate project.
 | `fki-ko/fki.h`, `fki-ko/fki_x86_mod.c`, `fki-ko/fki_hostcall.c`, `xnu_hook_x86.c` | FKI-X86 v1: semantic host services, CR3/IDT/GS and host-call dispatch | GPL-2.0-only |
 | `xnu-ko/world_x86.h`, `world_x86.S`, `world_x86_host.c` | per-CPU world switch, APIC-ID world lookup, host hook, fault abort | APSL-2.0 |
 | `xnu-ko/macho_x86.c/h`, `xnu_main_x86.c` | host loader: fileset KC, initial page tables, boot_args, vstart entry | APSL-2.0 |
-| `patches/0001..0006` | machine layer, host devices, boot/userland, PV locks, exceptions | APSL-2.0 |
+| `patches/0001..0012` | machine layer, host devices, boot/userland, PV locks, exceptions, build env, SDK stubs, page-table map and boot trace | APSL-2.0 |
 | `scripts/` | XNU 26 x86_64 fetch/build helpers | APSL-2.0 |
-| `docs/audit.md` | stage 1/2 audit, porting table and chances | APSL-2.0 |
+| `docs/audit.md` | stage 1/2 audit, porting table and current checklist | APSL-2.0 |
 | `docs/build-prereqs.md` | exact missing packages and build commands for this machine | APSL-2.0 |
+| `docs/boot-debug.md` | early-boot probe map, current stall and boot-test procedure (Russian) | APSL-2.0 |
 
 ## What is already here
 
@@ -47,21 +48,31 @@ and a separate project.
 - Hosted exception path: `kernel_trap`/`user_trap` hand `#PF/#GP/#UD/#SS` to
   the Linux host, which logs the fault frame and ends the run. First user entry
   is reported through `LINUX64_CALL_USER_ENTER`.
+- A working loader: kernel collection from `/lib/firmware/xnu26.kernel`,
+  segment remap, synthesized boot args, symbol lookup and a call into `_vstart`.
+- `kprintf_probe=1` installs numbered `SITE_TAG` breadcrumbs around the early
+  boot path and replays the overwritten instructions. The first `kprintf`
+  upcall output has been observed; execution currently stops inside
+  `cpu_desc_load()`. See [boot debug notes](docs/boot-debug.md) for the probe
+  map and the interpretation of a trace.
 
-This is a **skeleton**, not a bootable kernel. See `docs/audit.md` for the
-stage-2 checkpoint: an x86_64 host layer alone is not sufficient.
+This is **instrumented early boot**, not a bootable macOS kernel. See
+`docs/audit.md` for the stage-2 checkpoint and the remaining porting work.
 
 ## Order of work
 
 1. Build stock `xnu-12377.121.6` for `X86_64` with `config/MASTER.x86_64` and
-   link a kernel collection. No hosting yet.
-2. Port the patch series `patches/0001..0006` (done, applies cleanly).
-3. Host loader `xnu-ko/xnu_main_x86.c` exists: loads the KC from firmware,
-   builds identity + XNU-half page tables, synthesises boot_args, sets XNU's
-   globals and calls `_vstart` through the world switch.
-4. Real interrupt/timer injection and full ring-3 execution.
-5. Host devices and a macOS 26 Intel disk to first `launchd` and a shell.
-6. Framebuffer/i915 first, then Vulkan/Metal; RTX 4050 only afterwards.
+   link a kernel collection. **Done** (CI artifact, used as firmware).
+2. Port the patch series `patches/0001..0012`. **Done**, applies cleanly.
+3. Host loader `xnu-ko/xnu_main_x86.c`: KC from firmware, identity + XNU-half
+   page tables, boot_args synthesis, symbol globals and `_vstart` entry. **Done**.
+4. Debug early `vstart()`/`i386_init()` with `kprintf_probe=1`. **Current step**:
+   the trace reaches descriptor setup and stops in `cpu_desc_load()`; next
+   milestone is `kprintf initialized`.
+5. Real interrupt/timer injection and full ring-3 execution.
+6. Implement host disk/ramdisk calls, then use a macOS 26 Intel disk to reach
+   `launchd` and a shell.
+7. Framebuffer/i915 first, then Vulkan/Metal; RTX 4050 only afterwards.
 
 ## License boundary
 
