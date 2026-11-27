@@ -543,15 +543,14 @@ xnu_world_cpuid_p18_x86:
 	JMP_XNU 0xffffff80004e6adb
 	.size	xnu_world_cpuid_p18_x86, . - xnu_world_cpuid_p18_x86
 
+	/* MSR_CORE_THREAD_COUNT (0x35) is not implemented on modern hosts.
+	 * Use XNU's own zero-MSR fallback: 1 core / 1 thread. */
 	.globl xnu_world_cpuid_p19_x86
 	.type  xnu_world_cpuid_p19_x86, @function
 xnu_world_cpuid_p19_x86:
 	endbr64
 	SITE_PROBE 19
-	rdmsr
-	orl	%eax, %edx
 	movl	$0x10001, %ecx
-	cmovne	%eax, %ecx
 	JMP_XNU 0xffffff80004e6b1a
 	.size	xnu_world_cpuid_p19_x86, . - xnu_world_cpuid_p19_x86
 
@@ -560,10 +559,7 @@ xnu_world_cpuid_p19_x86:
 xnu_world_cpuid_p20_x86:
 	endbr64
 	SITE_PROBE 20
-	rdmsr
-	orl	%eax, %edx
 	movl	$0x10001, %ecx
-	cmovne	%eax, %ecx
 	JMP_XNU 0xffffff80004e6b36
 	.size	xnu_world_cpuid_p20_x86, . - xnu_world_cpuid_p20_x86
 
