@@ -487,6 +487,8 @@ xnu_world_cpuid_probe_x86:
 	SITE_PROBE 13
 	movabsq	$0xffffff80004e5750, %r11	/* cpuid_set_info */
 	call	*%r11
+	.globl xnu_world_cpuid_probe_after_info_x86
+xnu_world_cpuid_probe_after_info_x86:
 	SITE_PROBE 58
 	/* Replay cpuid_info()'s tail here and continue straight to the cpc2
 	 * probe, bypassing the original pop rbp / ret path. */
@@ -615,6 +617,33 @@ xnu_world_cpuid_p23_x86:
 .Lp23_fail:
 	JMP_XNU 0xffffff80004e6c2f
 	.size	xnu_world_cpuid_p23_x86, . - xnu_world_cpuid_p23_x86
+
+/* Same bypass as the cache-info epilogue: replay the rest of
+ * cpuid_set_info()'s epilogue here and continue straight to the cpuid probe's
+ * post-call label, skipping the original pop rbp / ret. */
+	.globl xnu_world_cpuid_p59_x86
+	.type  xnu_world_cpuid_p59_x86, @function
+xnu_world_cpuid_p59_x86:
+	endbr64
+	SITE_PROBE 23
+	movabsq	$0xffffff80010b3218, %r11
+	movq	(%r11), %rax
+	cmpq	-0x30(%rbp), %rax
+	jne	.Lp59_fail
+	addq	$0x98, %rsp
+	SITE_PROBE 59
+	popq	%rbx
+	popq	%r12
+	popq	%r13
+	popq	%r14
+	popq	%r15
+	popq	%rbp
+	addq	$8, %rsp		/* discard the cpuid probe's return address */
+	movabsq	$xnu_world_cpuid_probe_after_info_x86, %r11
+	jmp	*%r11
+.Lp59_fail:
+	JMP_XNU 0xffffff80004e6c2f
+	.size	xnu_world_cpuid_p59_x86, . - xnu_world_cpuid_p59_x86
 
 	.globl xnu_world_cache_p24_x86
 	.type  xnu_world_cache_p24_x86, @function
