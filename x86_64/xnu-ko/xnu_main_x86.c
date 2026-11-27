@@ -1154,7 +1154,34 @@ static int run_xnu(u64_t kc_pa, u64_t vmlow, u64_t vmhigh, u64_t kc_size,
 	memset((char *)mem.kc.va + image_size, 0, kc_size - image_size);
 
 	host_map_store.count = 0;
-	/* Preserve the static aliases of our boot structures across CR3 switches. */
+	/*
+	 * Idle_PTs_init() overlays the copied image from &_mh_execute_header
+	 * (__TEXT) onward. __HIB sits below __TEXT and is left pointing at the
+	 * identity alias of low physical memory, so after the CR3 switch calls
+	 * into hw_lock_init/memcpy/the trap stubs execute host RAM instead of
+	 * the image. Reinstall those pages through host_map, which
+	 * Idle_PTs_init() copies into the new tables before switching.
+	 */
+	{
+		static const unsigned int hib_data_pages[] = {
+		    0x79, 0x99, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa,
+		    0xba, 0xbb, 0xbf, 0xc0, 0xc2, 0xc3,
+		};
+		unsigned int p, i;
+
+		for (p = 0; p < 0x40; p++) {
+			u64_t off = (u64_t)p << PAGE_SHIFT;
+			record_host_map(XNU_VM_MIN_KERNEL + off, kc_pa + off);
+		}
+		for (i = 0; i < ARRAY_SIZE(hib_data_pages); i++) {
+			u64_t off = (u64_t)hib_data_pages[i] << PAGE_SHIFT;
+			record_host_map(XNU_VM_MIN_KERNEL + off, kc_pa + off);
+		}
+		debugf("loader: mapped %u host pages after CR3 switch\n",
+		    host_map_store.count);
+	}
+	/* Preserve the static aliases of our boot structures across CR3 switches.
+	 * Recorded last so they win over any overlapping __HIB page. */
 	record_host_map(XNU_VM_MIN_KERNEL | mem.ba.pa, mem.ba.pa);
 	record_host_map(XNU_VM_MIN_KERNEL | mem.dt.pa, mem.dt.pa);
 	record_host_map(XNU_VM_MIN_KERNEL | efi_region.pa, efi_region.pa);
