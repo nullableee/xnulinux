@@ -495,7 +495,8 @@ xnu_world_cpuid_probe_x86:
 	movq	%rax, (%r11)
 	popq	%rbp
 	addq	$8, %rsp		/* discard the cpc1 stub return address */
-	JMP_XNU 0xffffff8000512fc3
+	movabsq	$0xffffff8000512fc3, %r11
+	jmp	*%r11
 	.size	xnu_world_cpuid_probe_x86, . - xnu_world_cpuid_probe_x86
 
 /* cpuid_set_info() breadcrumbs. Every patched window is exactly 13 bytes and
