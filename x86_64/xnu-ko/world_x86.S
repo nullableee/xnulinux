@@ -455,10 +455,12 @@ xnu_world_site5_probe_x86:
 xnu_world_site6_probe_x86:
 	endbr64
 	SITE_PROBE 6
+	SITE_PROBE 63		/* upcall returned, replay starts */
 	movq	%rax, (%rcx)
 	movl	$1, %edi
 	movabsq	$0xffffff80004e3c60, %r11	/* cpu_data_alloc */
 	call	*%r11
+	SITE_PROBE 64		/* cpu_data_alloc returned */
 	movabsq	$0xffffff80004efdb1, %r11
 	jmp	*%r11
 	.size	xnu_world_site6_probe_x86, . - xnu_world_site6_probe_x86
