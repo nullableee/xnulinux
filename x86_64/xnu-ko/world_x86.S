@@ -487,8 +487,15 @@ xnu_world_cpuid_probe_x86:
 	SITE_PROBE 13
 	movabsq	$0xffffff80004e5750, %r11	/* cpuid_set_info */
 	call	*%r11
-	movabsq	$0xffffff80004e573e, %r11
-	jmp	*%r11
+	SITE_PROBE 58
+	/* Replay cpuid_info()'s tail here and continue straight to the cpc2
+	 * probe, bypassing the original pop rbp / ret path. */
+	movabsq	$0xffffff80010eb100, %rax
+	movabsq	$0xffffff80010eb368, %r11
+	movq	%rax, (%r11)
+	popq	%rbp
+	addq	$8, %rsp		/* discard the cpc1 stub return address */
+	JMP_XNU 0xffffff8000512fc3
 	.size	xnu_world_cpuid_probe_x86, . - xnu_world_cpuid_probe_x86
 
 /* cpuid_set_info() breadcrumbs. Every patched window is exactly 13 bytes and
@@ -747,19 +754,6 @@ xnu_world_cache_p54_x86:
 .Lp54_bad:
 	JMP_XNU 0xffffff80004e75f0
 	.size	xnu_world_cache_p54_x86, . - xnu_world_cache_p54_x86
-
-/* cpc_early_init() right after cpuid_info() returns. */
-	.globl xnu_world_cpc_p57_x86
-	.type  xnu_world_cpc_p57_x86, @function
-xnu_world_cpc_p57_x86:
-	endbr64
-	SITE_PROBE 57
-	cmpb	$0x2, 0x138(%rax)
-	jb	.Lp57_taken
-	JMP_XNU 0xffffff8000512fd0
-.Lp57_taken:
-	JMP_XNU 0xffffff8000513087
-	.size	xnu_world_cpc_p57_x86, . - xnu_world_cpc_p57_x86
 
 /* cpuid_wa_required() breadcrumbs. The two PE_parse_boot_argn() windows are
  * 16 bytes long; write_abs_jmp() replaces the first 13 and the stub replays
