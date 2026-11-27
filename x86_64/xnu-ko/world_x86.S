@@ -486,6 +486,60 @@ xnu_world_site7_probe_x86:
 	jmp	*%r11
 	.size	xnu_world_site7_probe_x86, . - xnu_world_site7_probe_x86
 
+/*
+ * Breadcrumbs inside cpu_desc_load().  The hang after 0x41 is inside this
+ * function (the stack still holds the return address after the stub's
+ * `call cpu_desc_load`), so split the 13-byte patches at instruction boundaries and
+ * replay the overwritten instructions in each stub.  SITE_PROBE runs first:
+ * even if the replayed instruction faults, the trace still shows how far we
+ * got.  %r11 is scratch, as with all write_abs_jmp() sites.
+ */
+	.globl xnu_world_desc_p67_x86
+	.type  xnu_world_desc_p67_x86, @function
+xnu_world_desc_p67_x86:
+	endbr64
+	SITE_PROBE 67			/* GS/KernelGS written, cdi located */
+	movq	%gs:0, %rax
+	movq	0x284(%rax), %rax
+	movabsq	$0xffffff80004e3b1b, %r11
+	jmp	*%r11
+	.size	xnu_world_desc_p67_x86, . - xnu_world_desc_p67_x86
+
+	.globl xnu_world_desc_p68_x86
+	.type  xnu_world_desc_p68_x86, @function
+xnu_world_desc_p68_x86:
+	endbr64
+	SITE_PROBE 68			/* cdi base mask applied */
+	andq	%rcx, 0x40(%rax)
+	movw	$0x97, 0x282(%rdi)
+	movabsq	$0xffffff80004e3b32, %r11
+	jmp	*%r11
+	.size	xnu_world_desc_p68_x86, . - xnu_world_desc_p68_x86
+
+	.globl xnu_world_desc_p69_x86
+	.type  xnu_world_desc_p69_x86, @function
+xnu_world_desc_p69_x86:
+	endbr64
+	SITE_PROBE 69			/* about to load GDT/IDT */
+	lgdt	0x278(%rdi)
+	lidt	0x28c(%rdi)
+	movabsq	$0xffffff80004e3b5f, %r11
+	jmp	*%r11
+	.size	xnu_world_desc_p69_x86, . - xnu_world_desc_p69_x86
+
+	.globl xnu_world_desc_p70_x86
+	.type  xnu_world_desc_p70_x86, @function
+xnu_world_desc_p70_x86:
+	endbr64
+	SITE_PROBE 70			/* about to load LDT/TSS */
+	movabsq	$0xffffff8000dbcde0, %r11
+	lldt	(%r11)
+	movabsq	$0xffffff8000dbcde2, %r11
+	ltr	(%r11)
+	movabsq	$0xffffff80004e3b6d, %r11
+	jmp	*%r11
+	.size	xnu_world_desc_p70_x86, . - xnu_world_desc_p70_x86
+
 	.globl xnu_world_site8_probe_x86
 	.type  xnu_world_site8_probe_x86, @function
 xnu_world_site8_probe_x86:

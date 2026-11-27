@@ -748,6 +748,60 @@ static int write_xnu_globals(void)
 					}
 				}
 
+				/* cpu_desc_load() is where the trace stops after 0x41.
+				 * Four disjoint 13-byte windows bracket the descriptor
+				 * setup: GS/GSBASE, cdi mask/size, GDT/IDT, LDT/TSS. */
+				{
+					u64_t a_cdl = macho_x86_sym(&img, "_cpu_desc_load");
+
+					static const struct {
+						u64_t off;
+						u8 id;
+						const u8 expect[13];
+						void (*probe)(void);
+					} desc_sites[] = {
+					    { 0x1b, 67, {
+						0x65, 0x48, 0x8b, 0x04, 0x25, 0x00,
+						0x00, 0x00, 0x00, 0x48, 0x8b, 0x80, 0x84 },
+						    xnu_world_desc_p67_x86 },
+					    { 0x35, 68, {
+						0x48, 0x21, 0x48, 0x40, 0x66, 0xc7,
+						0x87, 0x82, 0x02, 0x00, 0x00, 0x97, 0x00 },
+						    xnu_world_desc_p68_x86 },
+					    { 0x61, 69, {
+						0x0f, 0x01, 0x97, 0x78, 0x02, 0x00,
+						0x00, 0x0f, 0x01, 0x9f, 0x8c, 0x02, 0x00 },
+						    xnu_world_desc_p69_x86 },
+					    { 0x6f, 70, {
+						0x0f, 0x00, 0x15, 0x7a, 0x92, 0x8d,
+						0x00, 0x0f, 0x00, 0x1d, 0x75, 0x92, 0x8d },
+						    xnu_world_desc_p70_x86 },
+					};
+					unsigned int s;
+
+					if (!a_cdl)
+						pr_warn("xnu86: _cpu_desc_load not found\n");
+					for (s = 0; s < ARRAY_SIZE(desc_sites); s++) {
+						u8 *at = a_cdl
+						    ? xnu_va_to_host(a_cdl + desc_sites[s].off)
+						    : NULL;
+
+						if (at && !memcmp(at, desc_sites[s].expect,
+						    sizeof(desc_sites[s].expect))) {
+							write_abs_jmp(at,
+							    (unsigned long)(uintptr_t)
+							    desc_sites[s].probe);
+							debugf("xnu86: desc site %u at 0x%llx\n",
+							    desc_sites[s].id,
+							    (unsigned long long)
+							    (a_cdl + desc_sites[s].off));
+						} else {
+							pr_warn("xnu86: desc site %u pattern not found\n",
+							    desc_sites[s].id);
+						}
+					}
+				}
+
 				/* Inside cpc_early_init(), which is the first call after
 				 * the KERNEL_TABLES upcall. */
 				{
