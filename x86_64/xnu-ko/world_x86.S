@@ -810,45 +810,36 @@ xnu_world_ci_p39_x86:
 	JMP_XNU 0xffffff80004e6a51
 	.size	xnu_world_ci_p39_x86, . - xnu_world_ci_p39_x86
 
-/* _strlcpy() entry, used by cpuid_set_generic_info() right after p35. */
+/* Bounded strlcpy(). XNU's copy scans for NUL without a limit; the host CPUID
+ * brand string is 48 non-NUL bytes, so that scan ran off the stack. This
+ * version copies at most size-1 bytes, always NUL-terminates, and returns the
+ * copied length (callers here only test the return for nonzero). */
 	.globl xnu_world_strlcpy_p41_x86
 	.type  xnu_world_strlcpy_p41_x86, @function
 xnu_world_strlcpy_p41_x86:
 	endbr64
 	SITE_PROBE 41
-	xorl	%eax, %eax
-	JMP_XNU 0xffffff80004b4750
-	.size	xnu_world_strlcpy_p41_x86, . - xnu_world_strlcpy_p41_x86
-
-/* _strlcpy() copy path and return. */
-	.globl xnu_world_strlcpy_p42_x86
-	.type  xnu_world_strlcpy_p42_x86, @function
-xnu_world_strlcpy_p42_x86:
-	endbr64
-	SITE_PROBE 42
 	testq	%rdx, %rdx
-	je	.Lp42_zero
-	leaq	-1(%rdx), %rax
-	movq	%rdi, %r14
-	movq	%rdx, %r15
-	JMP_XNU 0xffffff80004b4786
-.Lp42_zero:
-	JMP_XNU 0xffffff80004b4794
-	.size	xnu_world_strlcpy_p42_x86, . - xnu_world_strlcpy_p42_x86
-
-	.globl xnu_world_strlcpy_p43_x86
-	.type  xnu_world_strlcpy_p43_x86, @function
-xnu_world_strlcpy_p43_x86:
-	endbr64
-	SITE_PROBE 43
-	movq	%rbx, %rax
-	addq	$8, %rsp
-	popq	%rbx
-	popq	%r14
-	popq	%r15
-	popq	%rbp
-	JMP_XNU 0xffffff80004b47a1
-	.size	xnu_world_strlcpy_p43_x86, . - xnu_world_strlcpy_p43_x86
+	je	.Lstrlcpy_done
+	leaq	-1(%rdx), %rcx
+	movq	%rdi, %r8
+	xorl	%eax, %eax
+.Lstrlcpy_scan:
+	testq	%rcx, %rcx
+	je	.Lstrlcpy_copy
+	cmpb	$0, (%rsi,%rax,1)
+	je	.Lstrlcpy_copy
+	incq	%rax
+	decq	%rcx
+	jmp	.Lstrlcpy_scan
+.Lstrlcpy_copy:
+	movq	%rax, %rcx
+	movq	%r8, %rdi
+	rep movsb
+	movb	$0, (%rdi)
+.Lstrlcpy_done:
+	ret
+	.size	xnu_world_strlcpy_p41_x86, . - xnu_world_strlcpy_p41_x86
 
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
