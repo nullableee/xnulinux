@@ -820,6 +820,36 @@ xnu_world_strlcpy_p41_x86:
 	JMP_XNU 0xffffff80004b4750
 	.size	xnu_world_strlcpy_p41_x86, . - xnu_world_strlcpy_p41_x86
 
+/* _strlcpy() copy path and return. */
+	.globl xnu_world_strlcpy_p42_x86
+	.type  xnu_world_strlcpy_p42_x86, @function
+xnu_world_strlcpy_p42_x86:
+	endbr64
+	SITE_PROBE 42
+	testq	%rdx, %rdx
+	je	.Lp42_zero
+	leaq	-1(%rdx), %rax
+	movq	%rdi, %r14
+	movq	%rdx, %r15
+	JMP_XNU 0xffffff80004b4786
+.Lp42_zero:
+	JMP_XNU 0xffffff80004b4794
+	.size	xnu_world_strlcpy_p42_x86, . - xnu_world_strlcpy_p42_x86
+
+	.globl xnu_world_strlcpy_p43_x86
+	.type  xnu_world_strlcpy_p43_x86, @function
+xnu_world_strlcpy_p43_x86:
+	endbr64
+	SITE_PROBE 43
+	movq	%rbx, %rax
+	addq	$8, %rsp
+	popq	%rbx
+	popq	%r14
+	popq	%r15
+	popq	%rbp
+	JMP_XNU 0xffffff80004b47a1
+	.size	xnu_world_strlcpy_p43_x86, . - xnu_world_strlcpy_p43_x86
+
 /* cpc_early_init() breadcrumbs: id10 after PE_parse_boot_argn(), id11 after
  * cpuid_info(). Both replay the original compare/branch so the early-exit
  * path still lands at cpc_early_init+0xe7. */
