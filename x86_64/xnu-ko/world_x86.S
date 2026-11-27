@@ -302,6 +302,37 @@ xnu_world_kprintf_probe_x86:
 	popfq
 	.endm
 
+/* Same as SITE_PROBE, but log the caller's %rdx as a2 instead of clearing it.
+ * The value is pushed/popped like every other caller-saved register. */
+	.macro SITE_PROBE_RDX id
+	pushfq
+	pushq	%rbx
+	movq	%rsp, %rbx
+	andq	$-16, %rsp
+	pushq	%rax
+	pushq	%rcx
+	pushq	%rdx
+	pushq	%rsi
+	pushq	%rdi
+	pushq	%r8
+	pushq	%r9
+	pushq	%r10
+	movl	$1001, %edi		/* LINUX64_CALL_SITE_TAG */
+	movl	$\id, %esi
+	call	xnu_world_hook_trampoline_x86
+	popq	%r10
+	popq	%r9
+	popq	%r8
+	popq	%rdi
+	popq	%rsi
+	popq	%rdx
+	popq	%rcx
+	popq	%rax
+	movq	%rbx, %rsp
+	popq	%rbx
+	popfq
+	.endm
+
 /* vstart 0x9c4, right after doublemap_init() returns. The original leaq/nop
  * is replaced by the 13-byte absolute jump, which also consumes the first byte
  * of the loop's movq at 0x9d0. Replay that movq here and resume at 0x9d4. */
@@ -633,7 +664,13 @@ xnu_world_cpuid_p59_x86:
 	addq	$0x98, %rsp
 	jmp	.Lp59_continue
 .Lp59_fail:
-	SITE_PROBE 60
+	/* Log both sides of the failed comparison: id60 = saved canary,
+	 * id61 = the current ___stack_chk_guard value. */
+	movq	-0x30(%rbp), %rdx
+	SITE_PROBE_RDX 60
+	movabsq	$0xffffff80010b3218, %r11
+	movq	(%r11), %rdx
+	SITE_PROBE_RDX 61
 	addq	$0x98, %rsp
 .Lp59_continue:
 	popq	%rbx
