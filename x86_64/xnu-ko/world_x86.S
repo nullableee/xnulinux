@@ -573,6 +573,12 @@ xnu_world_desc_p70_x86:
 	SITE_PROBE 75			/* about to load TSS */
 	movabsq	$0xffffff8000dbcde2, %r11
 	ltr	(%r11)
+	/* ltr sets the busy bit in the in-memory GDT descriptor. The host
+	 * reloads TR on every return to XNU, and a second ltr of a busy TSS
+	 * raises #GP. XNU clears this bit itself before a wake-time reload;
+	 * do the same here. */
+	movq	0x27a(%rdi), %r11
+	andb	$0xfd, 0x45(%r11)	/* GDT[8] access, ACC_TSS_BUSY */
 	SITE_PROBE 72			/* TSS loaded, returning from cpu_desc_load */
 	movabsq	$0xffffff80004e3b6d, %r11
 	jmp	*%r11
