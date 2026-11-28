@@ -61,18 +61,18 @@ int xnu_hook_set_translate(xnu_hook_translate_fn fn)
 }
 EXPORT_SYMBOL(xnu_hook_set_translate);
 
-/* SITE_TAG markers go to the in-memory ring and to the file trace through
- * fki_trace_push(), so the familiar `hook:`/`site tag done` lines stay in
- * xnu-boot.log without any mutex or file I/O in the upcall path. */
+/* SITE_TAG markers go only to the lock-free ring; the logger thread writes
+ * them to xnu-boot.log. No printk() here: the observed hang at tag 0x48 was
+ * between the upcall line (already in the ring) and this marker, i.e. inside
+ * the KERN_DEBUG printk() that used to run first. Console output in the
+ * foreign-world upcall path is not safe. */
 static void site_trace(const char *what, unsigned long a1)
 {
 	char b[96];
 	int n = snprintf(b, sizeof(b), "%s a1=0x%lx\n", what, a1);
 
-	if (n > 0) {
-		printk(KERN_DEBUG "fki-x86: %.*s", n, b);
+	if (n > 0)
 		fki_trace_push(b, min_t(int, n, sizeof(b) - 1));
-	}
 }
 
 static const char *fault_name(unsigned long v)
@@ -125,14 +125,9 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 			    xnu_upcall_count, call, xnu_upcall_ret, a1, a2);
 		}
 		if (n > 0) {
-			/* Nothing in the upcall path may take fki_debug_lock or
-			 * call kernel_write(): the logger thread can own that
-			 * mutex while the foreign world's state is live here,
-			 * and the run wedges on the next line. SITE_TAG also
-			 * goes to dmesg so its three markers survive even if
-			 * the logger thread is not scheduled. */
-			if (site_tag)
-				printk(KERN_DEBUG "fki-x86: %.*s", n, buf);
+			/* Nothing in the upcall path may take fki_debug_lock,
+			 * call kernel_write() or printk(): the logger can own
+			 * the mutex while the foreign world is live here. */
 			fki_trace_push(buf, min_t(int, n, sizeof(buf) - 1));
 		}
 	}

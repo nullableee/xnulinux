@@ -87,7 +87,10 @@ mutex и замораживала единственный CPU, на котор�
 
 Теперь **любая** запись из upcall-а идёт через `fki_trace_push()`: это
 lock-free ring (`atomic_inc_return` + `memcpy`), тред-логгер разбирает его в
-обычном контексте и пишет в файл. В хуке больше нет ни mutex, ни `kernel_write()`.
+обычном контексте и пишет в файл. В хуке больше нет ни mutex, ни `kernel_write()`,
+ни `printk()` в SITE_TAG-пути: дедлок на `0x48` случался между строкой `upcall#`
+(уже в ring) и `hook: upcall logged`, то есть в `KERN_DEBUG printk()`, который
+выполнялся перед записью маркера в ring.
 Следующий trace должен показать `0x48 → 0x42 → 0x53…0x5a → 0x8 → 0x4c…0x52`.
 
 `xnu-boot.log` по-прежнему содержит `upcall#`/`KPRINTF`/`phase:`/`hook:`
