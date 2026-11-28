@@ -138,7 +138,13 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	}
 
 	fki_x86_phase_set(40, call);
-	if (log_upcall) {
+	/*
+	 * SITE_TAG already has two fsynced file markers ("upcall logged" and
+	 * "verbose done"/"site tag done"). The verbose pr_info() has been seen
+	 * to wedge at the return path after ltr() while the file markers keep
+	 * flowing, so skip console logging for this diagnostic call entirely.
+	 */
+	if (log_upcall && call != LINUX64_CALL_SITE_TAG) {
 		pr_info("upcall: call=%lu a1=0x%lx a2=0x%lx "
 		    "preempt=0x%x nmi=%d irqoff=%d\n",
 		    call, a1, a2, preempt_count(), (int)in_nmi(),
