@@ -166,6 +166,8 @@ static int xnu_stack_watchdog(void *unused)
  */
 #define XNU_VM_MIN_KERNEL 0xffffff8000000000ULL
 #define PML4_KERNEL_INDEX 511
+#define PML4_DBLMAP_INDEX 493
+#define XNU_DBLMAP_SIZE   0xc4000ULL /* __HIB vmsize in this firmware */
 #define PT_E_PRESENT      0x001
 #define PT_E_WRITABLE     0x002
 #define PT_E_LARGE        0x080
@@ -204,8 +206,16 @@ struct init_pt {
 	u64_t *host_pde[HOST_PDE_PAGES];
 	u64_t *host_pte[HOST_PTE_PAGES];
 	unsigned int n_host_pdpt, n_host_pde, n_host_pte;
+	/* XNU's ID_MAP_VTOP() assumes the kernel image lives at PA 0x100000,
+	 * but it is loaded at kc_pa.  Build a correct double-map subtree and
+	 * install it in IdlePML4[493] after doublemap_init() runs. */
+	u64_t *dm_pdpt, *dm_pde, *dm_pte;
+	u64_t dm_pdpt_pa;
 	struct fki_region region;
 };
+
+/* Consumed by xnu_world_site1_probe_x86() from module text. */
+u64_t xnu_doublemap_pdpt_pa_x86;
 
 static u64_t *pt_page_va(struct init_pt *pt, u64_t pt_pa, unsigned int idx)
 {
@@ -349,11 +359,13 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 		alias_top = max_t(u64_t, alias_top,
 		    ALIGN(mem.dt.pa + mem.dt.size, 2UL << 20));
 	const unsigned long k_n_pte = DIV_ROUND_UP(alias_top, 2UL << 20);
+	/* __HIB is 0xc4000 bytes in this firmware: 49 pages, one PTE page. */
+	const unsigned long dm_base = PT_PTE_K + k_n_pte;
 	unsigned long pt_size, i, n;
 	u64_t pa;
 
 	memset(pt, 0, sizeof(*pt));
-	pt_size = (PT_PTE_K + k_n_pte) * PAGE_SIZE;
+	pt_size = (dm_base + 3) * PAGE_SIZE;
 	if (fki_x86_shared_alloc(pt_size, &pt->region))
 		return -ENOMEM;
 	pt->pte_k = kzalloc(k_n_pte * sizeof(*pt->pte_k), GFP_KERNEL);
@@ -372,6 +384,10 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 	for (i = 0; i < k_n_pte; i++)
 		pt->pte_k[i] =
 		    (u64_t *)pt_page_va(pt, pa, PT_PTE_K + i);
+	pt->dm_pdpt = (u64_t *)pt_page_va(pt, pa, dm_base);
+	pt->dm_pde = (u64_t *)pt_page_va(pt, pa, dm_base + 1);
+	pt->dm_pte = (u64_t *)pt_page_va(pt, pa, dm_base + 2);
+	pt->dm_pdpt_pa = pt_page_pa(pa, dm_base);
 
 	memset(pt->region.va, 0, pt_size);
 
@@ -410,9 +426,22 @@ static int build_init_pt(struct init_pt *pt, u64_t kc_pa, u64_t vmlow,
 		    (kc_pa + n * PAGE_SIZE) | PT_E_PRESENT | PT_E_WRITABLE;
 	}
 
+	/* Correct double-map: XNU's own doublemap_init() derives PTE physical
+	 * addresses with ID_MAP_VTOP() = (VA & 0xffffffff), i.e. PA 0x1a6000
+	 * for master_gdt, while the image is actually at kc_pa.  Map the same
+	 * HIB pages at the dblmap_base VA with the real kc_pa offsets. */
+	pt->dm_pdpt[0] = pt_page_pa(pa, dm_base + 1) |
+	    PT_E_PRESENT | PT_E_WRITABLE;
+	pt->dm_pde[0] = pt_page_pa(pa, dm_base + 2) |
+	    PT_E_PRESENT | PT_E_WRITABLE;
+	for (n = 0; n < XNU_DBLMAP_SIZE >> PAGE_SHIFT; n++)
+		pt->dm_pte[n] = (kc_pa + n * PAGE_SIZE) |
+		    PT_E_PRESENT | PT_E_WRITABLE;
+
 	/* Host pages that are live on both sides of the CR3 switch. */
 	map_host_code(pt, pa, xnu_stack_va, stack_size);
 
+	xnu_doublemap_pdpt_pa_x86 = pt->dm_pdpt_pa;
 	*out_phys = pa;
 	return 0;
 }

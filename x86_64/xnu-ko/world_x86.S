@@ -350,6 +350,16 @@ xnu_world_kprintf_probe_x86:
 xnu_world_site1_probe_x86:
 	endbr64
 	SITE_PROBE 1
+	/* doublemap_init() built its PTEs with ID_MAP_VTOP() = VA & 0xffffffff,
+	 * which points at PA 0x1a6000 instead of the copied kernel at kc_pa.
+	 * Swap in the loader-built subtree before XNU uses any DBLMAP pointer. */
+	pushq	%rax
+	movabsq	$0xffffff800106f360, %rax
+	movq	(%rax), %rax		/* IdlePML4 virtual pointer */
+	movq	xnu_doublemap_pdpt_pa_x86(%rip), %r11
+	orq	$3, %r11
+	movq	%r11, 493*8(%rax)
+	popq	%rax
 	movabsq	$0xffffff800010c000, %r9	/* _master_idt64 */
 	movq	(%r9,%rdi), %rsi		/* replay _vstart+0x9d0 */
 	movabsq	$0xffffff80004ef7d4, %r11	/* resume _vstart+0x9d4 */
