@@ -244,8 +244,13 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		return 0;
 
 	case LINUX64_CALL_SITE_TAG:
-		/* Host-only breadcrumb from a patched XNU site; the fsynced
-		 * upcall trace above already records a1 (the site id). */
+		/* Host-only breadcrumb from a patched XNU site. The entry is
+		 * already fsynced above; log the exit too, synchronously, so a
+		 * deadlock in fki_x86_enter() still leaves a complete trace
+		 * without depending on the phase logger thread. */
+		n = snprintf(buf, sizeof(buf), "site tag done a1=0x%lx\n", a1);
+		if (n > 0)
+			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
 		return 0;
 
 	default:

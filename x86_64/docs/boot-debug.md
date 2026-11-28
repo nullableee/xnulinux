@@ -62,6 +62,12 @@ sudo sh -c 'grep -E "upcall#|xnu: panic|assertion failed|unhandled|xnu: fault|ph
 | `5/6/7` | `load_pre_cr3` / `load_post_cr3` / `load_msrs` | внутри `fki_x86_load_state_asm()` |
 | `24` | `upcall_xnu` | `fki_x86_enter()` завершён, обратно в XNU |
 
+Фазы пишутся тредом-логгером и могут не попасть в лог при полном дедлоке.
+Поэтому `LINUX64_CALL_SITE_TAG` теперь добавляет **синхронную** fsynced-метку
+`site tag done a1=0x…` сразу после возврата из `xnu_hook_x86()`. Если после
+`upcall# … a1=0x46` есть `site tag done a1=0x46`, но нет `0x47` — дедлок в
+`fki_x86_enter()`, до `lldt()`.
+
 ## Что видно сейчас
 
 Последний проверенный trace (модуль `9e5c781…`, смещение `SITE_PROBE 0x30` =
