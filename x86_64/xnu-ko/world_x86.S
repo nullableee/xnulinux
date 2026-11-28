@@ -178,13 +178,22 @@ xnu_world_upcall_x86:
 	call	fki_x86_leave
 	movq	$23, fki_x86_phase(%rip)
 
+	/* Fine-grained breadcrumbs for the return path. The last trace stopped
+	 * at SITE_TAG 0x46 in phase 23, never reached phase 24 and never
+	 * entered lldt(), so split the short window between fki_x86_leave()
+	 * and fki_x86_enter(). The phase logger samples every 5 ms and also
+	 * repeats a stable phase every 100 ms. */
+	movq	$74, fki_x86_phase(%rip)	/* fields saved, still on XNU frame */
+
 	/* Run the host hook on Linux's stack, not on an XNU kernel stack. */
 	movq	%rsp, XW_XNU_RSP(%r15)
 	movq	XW_LINUX_RSP(%r15), %rsp
+	movq	$75, fki_x86_phase(%rip)	/* Linux stack, before host hook */
 	movq	XW_HOOK_CALL(%r15), %rdi
 	movq	XW_HOOK_A1(%r15), %rsi
 	movq	XW_HOOK_A2(%r15), %rdx
 	call	xnu_hook_x86
+	movq	$76, fki_x86_phase(%rip)	/* host hook returned */
 	testq	%rax, %rax
 	jne	.Lxnu_upcall_abort
 

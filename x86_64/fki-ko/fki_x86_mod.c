@@ -471,6 +471,9 @@ static const char *fki_phase_name(unsigned long p)
 	case 23: return "upcall_linux";
 	case 24: return "upcall_xnu";
 	case 25: return "upcall_abort";
+	case 74: return "upcall_fields";
+	case 75: return "upcall_hook";
+	case 76: return "upcall_hooked";
 	case 70: return "site3_pre_cr3";
 	case 71: return "site3_post_cr3";
 	case 72: return "site3_hook_read";
