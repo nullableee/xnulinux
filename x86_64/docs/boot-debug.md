@@ -22,7 +22,7 @@ upcall-ы на хост и доходит до раннего `i386_init()`, н�
 sha256sum x86_64/xnu-ko/xnu_x86.ko
 sudo insmod x86_64/fki-ko/fki_x86.ko
 sudo insmod x86_64/xnu-ko/xnu_x86.ko kprintf_probe=1
-sudo sh -c 'grep -E "upcall#|xnu: panic|assertion failed|unhandled|xnu: fault|phase:|xnu stack|desc site" /home/spotlight/xnu-boot.log | tail -200'
+sudo sh -c 'grep -E "upcall#|site tag done|hook:|xnu: panic|assertion failed|unhandled|xnu: fault|phase:|xnu stack|desc site" /home/spotlight/xnu-boot.log | tail -200'
 ```
 
 `kprintf_probe=0` патчит `_kprintf` в `ret` (обходит отсутствующий COM1).

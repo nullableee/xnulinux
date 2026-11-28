@@ -111,6 +111,14 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
 	}
 
+	/* Fine-grained breadcrumbs for the SITE_TAG path: a tag can be logged
+	 * on entry and still wedge before the exit marker below. */
+	if (call == LINUX64_CALL_SITE_TAG) {
+		n = snprintf(buf, sizeof(buf), "hook: upcall logged a1=0x%lx\n", a1);
+		if (n > 0)
+			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+	}
+
 	if (call == LINUX64_CALL_KPRINTF) {
 		const char *p = (const char *)(uintptr_t)hx(a1);
 
@@ -138,6 +146,11 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		/* Linux world with IRQs/preemption on: safe to fsync. */
 		n = snprintf(buf, sizeof(buf),
 		    "upcall: call=%lu a1=0x%lx a2=0x%lx\n", call, a1, a2);
+		if (n > 0)
+			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+	}
+	if (call == LINUX64_CALL_SITE_TAG) {
+		n = snprintf(buf, sizeof(buf), "hook: verbose done a1=0x%lx\n", a1);
 		if (n > 0)
 			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
 	}
