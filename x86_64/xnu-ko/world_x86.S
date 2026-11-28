@@ -542,9 +542,25 @@ xnu_world_desc_p69_x86:
 xnu_world_desc_p70_x86:
 	endbr64
 	SITE_PROBE 70			/* about to load LDT/TSS */
+
+	/* Read the live KERNEL_LDT descriptor out of the GDT before lldt().
+	 * 0x73/0x74 report its two halves as a2; 0x75 sits between lldt and
+	 * ltr so a #GP on either selector is unambiguous. */
+	/* %rdi is still cdp; cdi_gdtu.ptr lives at 0x27a(%rdi) (m16&64). */
+	subq	$32, %rsp
+	movq	0x27a(%rdi), %r11
+	movq	%r11, 16(%rsp)
+	movq	0x30(%r11), %rdx
+	SITE_PROBE_RDX 73		/* KERNEL_LDT descriptor low half */
+	movq	16(%rsp), %r11
+	movq	0x38(%r11), %rdx
+	SITE_PROBE_RDX 74		/* KERNEL_LDT descriptor high half */
+	addq	$32, %rsp
+
 	movabsq	$0xffffff8000dbcde0, %r11
 	lldt	(%r11)
 	SITE_PROBE 71			/* LDT loaded, about to load TSS */
+	SITE_PROBE 75			/* about to load TSS */
 	movabsq	$0xffffff8000dbcde2, %r11
 	ltr	(%r11)
 	SITE_PROBE 72			/* TSS loaded, returning from cpu_desc_load */
