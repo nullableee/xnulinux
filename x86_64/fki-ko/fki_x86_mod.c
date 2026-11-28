@@ -525,13 +525,14 @@ static int fki_phase_logger(void *unused)
 		 * long run, the phase stops changing and a change-only logger
 		 * would leave no trace at all. */
 		if (p != last || ++tick >= 20) {
-			char buf[224];
+			char buf[256];
 			int n = snprintf(buf, sizeof(buf),
-			    "phase: %lu %s arg=0x%lx pre=0x%lx upcalls=%lu last=0x%lx\n",
+			    "phase: %lu %s arg=0x%lx pre=0x%lx upcalls=%lu last=0x%lx stage=%lu\n",
 			    p, fki_phase_name(p), READ_ONCE(fki_x86_phase_arg),
 			    READ_ONCE(xnu_site3_hook_pre),
 			    READ_ONCE(xnu_upcall_count),
-			    READ_ONCE(xnu_upcall_last));
+			    READ_ONCE(xnu_upcall_last),
+			    READ_ONCE(fki_x86_hook_stage));
 
 			if (n > 0)
 				fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
@@ -1114,7 +1115,7 @@ static int __init fki_x86_init(void)
 	fki_debug_init();
 	/* The file is append-only, so tag each run with the build that wrote it. */
 	{
-		const char *mark = "fki-x86: BUILD 14532f4+live lock-free hook trace\n";
+		const char *mark = "fki-x86: BUILD live-stage in phase line\n";
 
 		fki_debug_log(mark, strlen(mark));
 	}

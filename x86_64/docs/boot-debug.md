@@ -95,14 +95,21 @@ lock-free ring (`atomic_inc_return` + `memcpy`), тред-логгер разб�
 в файл пишется строка `fki-x86: BUILD …` — по ней видно, какая сборка создала
 хвост лога (файл дописывается, а не перезаписывается).
 
-Если логгер сам встал, живое состояние читается из другого CPU без всякого I/O:
+Живой этап хука виден прямо в `phase:`-строках файла — логгер с другого CPU
+печатает его каждые 100 мс, даже когда фаза не меняется:
+
+```text
+phase: 75 upcall_hook ... stage=6
+```
+
+`stage`: `1` вход в хук, `2` строка upcall в ring, `3` `hook: upcall logged`,
+`4` `hook: verbose done`, `5` вход в `case SITE_TAG`, `6` `site tag done`.
+
+Если логгер сам встал, то же состояние читается из `/proc` без всякого I/O:
 
 ```sh
 cat /proc/fki_x86_live
 ```
-
-`hook_stage`: `1` вход в хук, `2` строка upcall в ring, `3` `hook: upcall logged`,
-`4` `hook: verbose done`, `5` вход в `case SITE_TAG`, `6` `site tag done`.
 
 Раньше `doublemap_init()` вычислял физические адреса через
 `ID_MAP_VTOP(x) = x & 0xffffffff` и предполагал образ ядра по PA `0x1a6000`.
