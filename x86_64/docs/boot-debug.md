@@ -66,7 +66,7 @@ sudo sh -c 'grep -E "upcall#|site tag done|hook:|xnu: panic|assertion failed|unh
 | `24` | `upcall_xnu` | `fki_x86_enter()` завершён, обратно в XNU |
 
 Фазы пишутся тредом-логгером и могут не попасть в лог при полном дедлоке.
-Поэтому `LINUX64_CALL_SITE_TAG` добавляет **синхронную** fsynced-метку
+Поэтому `LINUX64_CALL_SITE_TAG` добавляет **синхронную** метку в файл
 `site tag done a1=0x…` сразу после возврата из `xnu_hook_x86()`.
 
 ## Что видно сейчас

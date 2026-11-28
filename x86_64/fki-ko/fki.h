@@ -37,11 +37,11 @@ extern "C" {
 int fki_version(void);
 void fki_log(const char *s, unsigned long len);
 void fki_log_alert(const char *s, unsigned long len);	/* KERN_ALERT: on the console even when it is quiet */
-/* Synchronous on-disk trace that survives a hard hang and a reboot. */
+/* Synchronous page-cache trace: visible immediately, no fsync stall. */
 int fki_debug_log(const char *s, unsigned long len);
 /*
  * Lock-free phase breadcrumbs for atomic context. A helper thread pinned away
- * from the XNU CPU flushes them to the fsynced trace, so the last phase is
+ * from the XNU CPU flushes them to the file trace, so the last phase is
  * visible even when the world switch wedges with interrupts off.
  * world_x86.S/fki_x86_state.S store the phase with a plain RIP-relative MOV.
  */

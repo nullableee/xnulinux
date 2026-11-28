@@ -407,8 +407,9 @@ EXPORT_SYMBOL(fki_log_alert);
 /*
  * dmesg/journald are useless when XNU wedges the box with interrupts off:
  * neither the reader nor the journal flusher gets scheduled. Append each
- * trace line to a plain file and fsync it immediately so it survives both
- * the hang and the hard reboot that follows.
+ * trace line to a plain file; kernel_write() makes it visible in the page
+ * cache immediately, while avoiding an fsync that can stall with the world
+ * switch in progress.
  */
 #define FKI_DEBUG_PATH "/home/spotlight/xnu-boot.log"
 static struct file *fki_debug_file;
@@ -419,7 +420,7 @@ static DEFINE_MUTEX(fki_debug_lock);
  * World-switch breadcrumbs. The downcall runs with preemption and IRQs off,
  * and an early XNU fault can reset the box before dmesg is ever flushed. The
  * phase/arg pair is written with plain stores (safe from asm and atomic
- * context); a kthread on another CPU polls it and appends to the fsynced log.
+ * context); a kthread on another CPU polls it and appends to the file trace.
  *
  * Phases:
  *   2 enter_prep, 3 ibt off, 4 xrstor done
@@ -539,11 +540,10 @@ int fki_debug_log(const char *s, unsigned long len)
 	if (!s || !len)
 		return 0;
 	/*
-	 * Never sleep in the fsync path.  World-switch code calls this with
-	 * preemption/IRQs disabled; mutex_lock(), kernel_write() and
-	 * vfs_fsync() would all schedule there and panic the host with
-	 * panic_on_warn.  Emit to printk instead; the persistent log is only
-	 * for callers in ordinary context.
+	 * World-switch code can call this with preemption/IRQs disabled;
+	 * mutex_lock() and kernel_write() would schedule there and panic the
+	 * host with panic_on_warn. Emit to printk instead; the file trace is
+	 * only for callers in ordinary context.
 	 */
 	if (preempt_count() || irqs_disabled()) {
 		printk(KERN_INFO "fki-x86: %.*s\n", (int)len, s);
@@ -556,10 +556,16 @@ int fki_debug_log(const char *s, unsigned long len)
 	}
 	pos = fki_debug_off;
 	n = kernel_write(fki_debug_file, s, len, &pos);
-	if (n > 0) {
+	if (n > 0)
 		fki_debug_off += n;
-		vfs_fsync(fki_debug_file, 0);
-	}
+	/*
+	 * No vfs_fsync() here. kernel_write() already makes the line visible in
+	 * the page cache, which is all the boot trace needs. fsync() keeps the
+	 * debug mutex while it waits on storage; an XNU upcall then blocks on
+	 * this mutex with the foreign world state still live, and the trace
+	 * stops between two consecutive file markers (we just saw exactly that
+	 * after "upcall#78" and before "hook: upcall logged").
+	 */
 	mutex_unlock(&fki_debug_lock);
 	return n < 0 ? n : 0;
 }

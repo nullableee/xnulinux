@@ -41,7 +41,7 @@ static int nr_cpus = 1;
 module_param(nr_cpus, int, 0444);
 static int allow_unhosted;
 module_param(allow_unhosted, int, 0444);
-/* Diagnostic: turn XNU's kprintf() into fsynced KPRINTF upcalls. */
+/* Diagnostic: turn XNU's kprintf() into file-logged KPRINTF upcalls. */
 static int kprintf_probe;
 module_param(kprintf_probe, int, 0444);
 

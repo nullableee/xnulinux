@@ -26,7 +26,7 @@ MODULE_LICENSE("GPL");
 
 /*
  * With kprintf_probe enabled every _kprintf in XNU becomes an upcall.  A
- * boot-time kprintf loop can otherwise do thousands of fsynced writes per
+ * boot-time kprintf loop can otherwise do thousands of file writes per
  * second and bury insmod under writeback/reclaim pressure.  Cap the log
  * rate while still returning from every upcall normally.
  */
@@ -83,7 +83,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	xnu_upcall_count++;
 
 	/*
-	 * Compact, fsynced trace of every upcall. The rate limit below only
+	 * Compact file trace of every upcall. The rate limit below only
 	 * gates the verbose dmesg line: when XNU wedges right after a kprintf
 	 * we still need the exact call site and the format string that was
 	 * printed last. Cap the total so a noisy later boot cannot flood the
@@ -139,7 +139,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	fki_x86_phase_set(40, call);
 	/*
-	 * SITE_TAG already has two fsynced file markers ("upcall logged" and
+	 * SITE_TAG already has two file markers ("upcall logged" and
 	 * "verbose done"/"site tag done"). The verbose pr_info() has been seen
 	 * to wedge at the return path after ltr() while the file markers keep
 	 * flowing, so skip console logging for this diagnostic call entirely.
@@ -149,7 +149,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		    "preempt=0x%x nmi=%d irqoff=%d\n",
 		    call, a1, a2, preempt_count(), (int)in_nmi(),
 		    (int)irqs_disabled());
-		/* Linux world with IRQs/preemption on: safe to fsync. */
+		/* Linux world with IRQs/preemption on: safe to write to file. */
 		n = snprintf(buf, sizeof(buf),
 		    "upcall: call=%lu a1=0x%lx a2=0x%lx\n", call, a1, a2);
 		if (n > 0)
@@ -264,7 +264,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	case LINUX64_CALL_SITE_TAG:
 		/* Host-only breadcrumb from a patched XNU site. The entry is
-		 * already fsynced above; log the exit too, synchronously, so a
+		 * already written above; log the exit too, synchronously, so a
 		 * deadlock in fki_x86_enter() still leaves a complete trace
 		 * without depending on the phase logger thread. */
 		n = snprintf(buf, sizeof(buf), "site tag done a1=0x%lx\n", a1);

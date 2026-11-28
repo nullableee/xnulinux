@@ -258,7 +258,7 @@ xnu_world_hook_trampoline_x86:
  * Diagnostic replacement for _kprintf's first bytes. XNU calls kprintf with
  * rdi = format string (varargs in the remaining argument registers). Turn it
  * into a normal LINUX64_CALL_KPRINTF(998, format, 0) upcall so the host can
- * fsync the format string before returning to the caller. The stack still
+ * log the format string before returning to the caller. The stack still
  * holds the original return address, so the upcall's `ret` resumes XNU.
  */
 	.globl xnu_world_kprintf_probe_x86
@@ -275,7 +275,7 @@ xnu_world_kprintf_probe_x86:
  * Diagnostic site probes. A patched XNU site jumps here with the original
  * caller's return address still on the stack. We save flags and every
  * caller-saved register, make one SITE_TAG upcall through the normal hook
- * gate (so it is fsynced with the rest of the trace), restore, and then run
+ * gate (so it is logged with the rest of the trace), restore, and then run
  * the original instructions. %rbx is preserved by the upcall itself, so it
  * can hold the unaligned stack pointer across the alignment adjustment.
  * %r11 is deliberately not restored: write_abs_jmp() already clobbers it to
@@ -455,7 +455,7 @@ xnu_world_site3_probe_x86:
 
 /* vstart breadcrumbs after KERNEL_TABLES. Each patch covers exactly 13 bytes;
  * the replayed instructions are the original ones, so the only added effect
- * is one fsynced SITE_TAG upcall with the id in a1. */
+ * is one file-logged SITE_TAG upcall with the id in a1. */
 	.globl xnu_world_site5_probe_x86
 	.type  xnu_world_site5_probe_x86, @function
 xnu_world_site5_probe_x86:
