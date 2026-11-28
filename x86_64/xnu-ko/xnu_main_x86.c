@@ -896,6 +896,77 @@ static int write_xnu_globals(void)
 					}
 				}
 
+				/* site7's call to cpu_syscall_init() is the next silence
+				 * after 0x42. Log each phase of the MSR setup with
+				 * instruction-boundary 13-byte windows, replaying the
+				 * overwritten instructions in every stub. */
+				{
+					u64_t a_syscall = macho_x86_sym(&img,
+					    "_cpu_syscall_init");
+
+					static const struct {
+						u64_t off;
+						u8 id;
+						const u8 expect[13];
+						void (*probe)(void);
+					} syscall_sites[] = {
+					    { 0x000, 83, {
+						0x55, 0x48, 0x89, 0xe5, 0xb8, 0x0b,
+						0x00, 0x00, 0x00, 0xb9, 0x74, 0x01, 0x00 },
+						    xnu_world_syscall_p83_x86 },
+					    { 0x012, 84, {
+						0x48, 0x8d, 0x35, 0x77, 0xb8, 0xb8,
+						0x00, 0x48, 0x8b, 0x16, 0x48, 0x03, 0x15 },
+						    xnu_world_syscall_p84_x86 },
+					    { 0x048, 85, {
+						0x89, 0xd0, 0x48, 0xc1, 0xea, 0x20,
+						0xb9, 0x76, 0x01, 0x00, 0x00, 0x0f, 0x30 },
+						    xnu_world_syscall_p85_x86 },
+					    { 0x055, 86, {
+						0x65, 0x48, 0x8b, 0x04, 0x25, 0x00,
+						0x00, 0x00, 0x00, 0x48, 0x8b, 0x90, 0xb0 },
+						    xnu_world_syscall_p86_x86 },
+					    { 0x072, 87, {
+						0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f,
+						0x32, 0x89, 0xd2, 0x83, 0xc8, 0x01, 0x0f },
+						    xnu_world_syscall_p87_x86 },
+					    { 0x080, 88, {
+						0x48, 0x8b, 0x16, 0x48, 0x03, 0x15,
+						0xae, 0xf4, 0xc2, 0x00, 0x49, 0x3b, 0x10 },
+						    xnu_world_syscall_p88_x86 },
+					    { 0x08d, 89, {
+						0x0f, 0x92, 0xc0, 0x48, 0x3b, 0x17,
+						0x73, 0x41, 0x84, 0xc0, 0x75, 0x43, 0x89 },
+						    xnu_world_syscall_p89_x86 },
+					    { 0x09b, 90, {
+						0x48, 0xc1, 0xea, 0x20, 0xb9, 0x82,
+						0x00, 0x00, 0xc0, 0x0f, 0x30, 0xba, 0x08 },
+						    xnu_world_syscall_p90_x86 },
+					};
+					unsigned int s;
+
+					if (!a_syscall)
+						pr_warn("xnu86: _cpu_syscall_init not found\n");
+					for (s = 0; a_syscall && s < ARRAY_SIZE(syscall_sites); s++) {
+						u8 *at = xnu_va_to_host(a_syscall +
+						    syscall_sites[s].off);
+
+						if (at && !memcmp(at, syscall_sites[s].expect,
+						    sizeof(syscall_sites[s].expect))) {
+							write_abs_jmp(at,
+							    (unsigned long)(uintptr_t)
+							    syscall_sites[s].probe);
+							debugf("xnu86: syscall site %u at 0x%llx\n",
+							    syscall_sites[s].id,
+							    (unsigned long long)
+							    (a_syscall + syscall_sites[s].off));
+						} else {
+							pr_warn("xnu86: syscall site %u pattern not found\n",
+							    syscall_sites[s].id);
+						}
+					}
+				}
+
 				/* Inside cpc_early_init(), which is the first call after
 				 * the KERNEL_TABLES upcall. */
 				{

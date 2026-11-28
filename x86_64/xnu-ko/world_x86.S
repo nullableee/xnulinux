@@ -599,6 +599,136 @@ xnu_world_i386_p81_x86:
 	.size	xnu_world_i386_p81_x86, . - xnu_world_i386_p81_x86
 
 /*
+ * Breadcrumbs through cpu_syscall_init().  site7 calls it after cpu_desc_load,
+ * and the trace stops between 0x42 (cpu_desc_load returned) and 0x8 (call
+ * returned).  Every stub logs first, replays all whole instructions covered
+ * by its 13-byte jump, then resumes past the window.  Conditional branches in
+ * 0x89 are replayed with absolute targets; all other windows are linear.
+ */
+	.globl xnu_world_syscall_p83_x86
+	.type  xnu_world_syscall_p83_x86, @function
+xnu_world_syscall_p83_x86:
+	endbr64
+	SITE_PROBE 83			/* cpu_syscall_init entry */
+	pushq	%rbp
+	movq	%rsp, %rbp
+	movl	$0xb, %eax
+	movl	$0x174, %ecx
+	xorl	%edx, %edx
+	wrmsr
+	movabsq	$0xffffff80004e3b82, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p83_x86, . - xnu_world_syscall_p83_x86
+
+	.globl xnu_world_syscall_p84_x86
+	.type  xnu_world_syscall_p84_x86, @function
+xnu_world_syscall_p84_x86:
+	endbr64
+	SITE_PROBE 84			/* SYSENTER_CS written, dblmap bounds loaded */
+	movabsq	$0xffffff800106f400, %rsi	/* _dblmap_dist */
+	movq	(%rsi), %rdx
+	movabsq	$0xffffff80011130b0, %r11
+	addq	(%r11), %rdx
+	movabsq	$0xffffff800106f3f0, %r8	/* _dblmap_base */
+	cmpq	(%r8), %rdx
+	movabsq	$0xffffff800106f3f8, %rdi	/* _dblmap_max */
+	setb	%al
+	cmpq	(%rdi), %rdx
+	movabsq	$0xffffff80004e3baa, %r11	/* jae after second cmp */
+	jmp	*%r11
+	.size	xnu_world_syscall_p84_x86, . - xnu_world_syscall_p84_x86
+
+	.globl xnu_world_syscall_p85_x86
+	.type  xnu_world_syscall_p85_x86, @function
+xnu_world_syscall_p85_x86:
+	endbr64
+	SITE_PROBE 85			/* dblmap checks passed */
+	movl	%edx, %eax
+	shrq	$0x20, %rdx
+	movl	$0x176, %ecx
+	wrmsr
+	movabsq	$0xffffff80004e3bc5, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p85_x86, . - xnu_world_syscall_p85_x86
+
+	.globl xnu_world_syscall_p86_x86
+	.type  xnu_world_syscall_p86_x86, @function
+xnu_world_syscall_p86_x86:
+	endbr64
+	SITE_PROBE 86			/* SYSENTER_EIP written, CPU data located */
+	movq	%gs:0, %rax
+	movq	0x2b0(%rax), %rdx
+	movl	%edx, %eax
+	shrq	$0x20, %rdx
+	movl	$0x175, %ecx
+	wrmsr
+	movabsq	$0xffffff80004e3be2, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p86_x86, . - xnu_world_syscall_p86_x86
+
+	.globl xnu_world_syscall_p87_x86
+	.type  xnu_world_syscall_p87_x86, @function
+xnu_world_syscall_p87_x86:
+	endbr64
+	SITE_PROBE 87			/* SYSENTER_ESP written */
+	movl	$0xc0000080, %ecx
+	rdmsr
+	movl	%edx, %edx
+	orl	$0x1, %eax
+	wrmsr
+	movabsq	$0xffffff80004e3bf0, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p87_x86, . - xnu_world_syscall_p87_x86
+
+	.globl xnu_world_syscall_p88_x86
+	.type  xnu_world_syscall_p88_x86, @function
+xnu_world_syscall_p88_x86:
+	endbr64
+	SITE_PROBE 88			/* EFER.SCE set */
+	movq	(%rsi), %rdx
+	movabsq	$0xffffff80011130a8, %r11
+	addq	(%r11), %rdx
+	cmpq	(%r8), %rdx
+	movabsq	$0xffffff80004e3bfd, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p88_x86, . - xnu_world_syscall_p88_x86
+
+	.globl xnu_world_syscall_p89_x86
+	.type  xnu_world_syscall_p89_x86, @function
+xnu_world_syscall_p89_x86:
+	endbr64
+	SITE_PROBE 89			/* second dblmap check completed */
+	movabsq	$0xffffff800106f3f8, %rdi	/* _dblmap_max */
+	setb	%al
+	cmpq	(%rdi), %rdx
+	jae	.Lsys89_cold1
+	testb	%al, %al
+	jne	.Lsys89_cold2
+	movl	%edx, %eax
+	movabsq	$0xffffff80004e3c0b, %r11
+	jmp	*%r11
+.Lsys89_cold1:
+	movabsq	$0xffffff80004e3c46, %r11
+	jmp	*%r11
+.Lsys89_cold2:
+	movabsq	$0xffffff80004e3c4c, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p89_x86, . - xnu_world_syscall_p89_x86
+
+	.globl xnu_world_syscall_p90_x86
+	.type  xnu_world_syscall_p90_x86, @function
+xnu_world_syscall_p90_x86:
+	endbr64
+	SITE_PROBE 90			/* LSTAR written, about to write STAR/SFMASK */
+	shrq	$0x20, %rdx
+	movl	$0xc0000082, %ecx
+	wrmsr
+	movl	$0x1b0008, %edx
+	movabsq	$0xffffff80004e3c16, %r11
+	jmp	*%r11
+	.size	xnu_world_syscall_p90_x86, . - xnu_world_syscall_p90_x86
+
+/*
  * Breadcrumbs inside cpu_desc_load().  The hang after 0x41 is inside this
  * function (the stack still holds the return address after the stub's
  * `call cpu_desc_load`), so split the 13-byte patches at instruction boundaries and

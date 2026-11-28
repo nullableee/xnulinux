@@ -46,6 +46,7 @@ sudo sh -c 'grep -E "upcall#|site tag done|hook:|xnu: panic|assertion failed|unh
 | `0x47`, `0x48` | 71, 72 | после `lldt`, после `ltr` (подтверждено загрузкой) |
 | `0x49`–`0x4b` | 73–75 | живые дескрипторы `KERNEL_LDT` и метка перед `ltr` |
 | `0x4c`–`0x52` | 76–81 | `i386_init()`: entry, pal/tsc/rtclock, debug/mca, boot_cpu_id, timer/cpu/init_upto, `kprintf initialized` |
+| `0x53`–`0x5a` | 83–90 | внутри `cpu_syscall_init()`: entry, dblmap bounds, SYSENTER_EIP, SYSENTER_ESP+CPU data, EFER, вторая проверка dblmap, ветвления, LSTAR/STAR/SFMASK |
 | `0x9` | 9 | продолжение `vstart()` после описанных выше вызовов (старая метка, сейчас перекрыта `site7`) |
 | `0x2d`, `0x3e` | 45, 62 | путь `cpuid_set_info()` / stub p44 |
 | `0x2f`, `0x30` | 47, 48 | старые метки `cpc_early_init()` |
@@ -70,20 +71,21 @@ sudo sh -c 'grep -E "upcall#|site tag done|hook:|xnu: panic|assertion failed|unh
 
 ## Что видно сейчас
 
-Последний trace (модули `06fe299…`/`9c98043…`) прошёл весь путь дескрипторов:
+Последний trace (модули `a429daa…`/`2e3792a…`) прошёл весь путь дескрипторов,
+но останавливается сразу после возврата из `cpu_desc_load()`:
 
 ```text
 upcall#78 a1=0x48     /* ltr вернулся */
 upcall#79 a1=0x42     /* cpu_desc_load() вернулся */
-upcall#80 a1=0x8      /* cpu_syscall_init() вернулся, site7 завершён */
+                      /* раньше здесь был 0x8, теперь добавляем 0x53–0x5a */
 ```
 
 `hook: upcall logged`, `hook: verbose done` и `site tag done` есть для каждой
-метки — значит дедлок больше не в самом хуке и не на выходе из него. После
-`0x8` `site7` прыгает на `vstart+0xfd0`, который через `x86_init_wrapper()`
-вызывает `i386_init()`. В дампе стека виден возврат
-`0xffffff80004eeeb6` (после `call x86_init_wrapper`), поэтому остановка уже
-внутри `i386_init()` или в одном из его ранних вызовов.
+метки — значит дедлок больше не в самом хуке и не на выходе из него. Стоп
+между `0x42` и `0x8` находится внутри `cpu_syscall_init()` (или при возврате
+из upcall-а `0x42` обратно в XNU), поэтому добавлены probes `0x53`–`0x5a` прямо
+по его MSR-последовательности. Если `0x53` не появится — проблема в
+`fki_x86_load_state_asm()` после `0x42`; если появится — читаем дальше по таблице.
 
 Раньше `doublemap_init()` вычислял физические адреса через
 `ID_MAP_VTOP(x) = x & 0xffffffff` и предполагал образ ядра по PA `0x1a6000`.
@@ -94,6 +96,16 @@ upcall#80 a1=0x8      /* cpu_syscall_init() вернулся, site7 заверш
 
 Как читать следующий trace:
 
+- `0x42` без `0x53` — остановка при возврате в XNU после upcall-а `0x42`
+  (`fki_x86_load_state_asm()`) или перед входом в `cpu_syscall_init()`;
+- `0x53` без `0x54` — пролог `cpu_syscall_init()` и запись `IA32_SYSENTER_CS`;
+- `0x54` без `0x55` — загрузка границ `dblmap` и `setb`/`cmpq`;
+- `0x55` без `0x56` — запись `IA32_SYSENTER_EIP`;
+- `0x56` без `0x57` — чтение `%gs:0` и запись `IA32_SYSENTER_ESP`;
+- `0x57` без `0x58` — `EFER.SCE` (`rdmsr`/`or`/`wrmsr`);
+- `0x58` без `0x59` — вторая проверка `dblmap`;
+- `0x59` без `0x5a` — ветвления `jae`/`jne` в cold path;
+- `0x5a` без `0x8` — запись `LSTAR`, `STAR` или `SFMASK`;
 - `0x8` без `0x4c` — остановка между `site7` и entry в `i386_init()`;
 - `0x4c` без `0x4d` — остановка в прологе `i386_init()`;
 - `0x4d` без `0x4e` — `pal_i386_init()`, `tsc_init()` или `rtclock_early_init()`;
