@@ -78,6 +78,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	char buf[256], sbuf[128];
 	int n;
 	int log_upcall = 1;
+	int site_tag = call == LINUX64_CALL_SITE_TAG;
 
 	xnu_upcall_last = call;
 	xnu_upcall_count++;
@@ -107,17 +108,25 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 			    "a1=0x%lx a2=0x%lx\n",
 			    xnu_upcall_count, call, xnu_upcall_ret, a1, a2);
 		}
-		if (n > 0)
-			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+		if (n > 0) {
+			/* SITE_TAG breadcrumbs must not touch the file path at
+			 * all: kernel_write() can block on dirty-page throttling
+			 * or the debug mutex while the foreign XNU state is live,
+			 * and we just watched the trace stop between two file
+			 * markers. KERN_DEBUG goes only to the in-memory dmesg
+			 * ring (console_loglevel is 4), so it cannot stall on
+			 * storage. */
+			if (site_tag)
+				printk(KERN_DEBUG "fki-x86: %.*s", n, buf);
+			else
+				fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+		}
 	}
 
 	/* Fine-grained breadcrumbs for the SITE_TAG path: a tag can be logged
 	 * on entry and still wedge before the exit marker below. */
-	if (call == LINUX64_CALL_SITE_TAG) {
-		n = snprintf(buf, sizeof(buf), "hook: upcall logged a1=0x%lx\n", a1);
-		if (n > 0)
-			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
-	}
+	if (site_tag)
+		printk(KERN_DEBUG "fki-x86: hook: upcall logged a1=0x%lx\n", a1);
 
 	if (call == LINUX64_CALL_KPRINTF) {
 		const char *p = (const char *)(uintptr_t)hx(a1);
@@ -139,12 +148,12 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	fki_x86_phase_set(40, call);
 	/*
-	 * SITE_TAG already has two file markers ("upcall logged" and
-	 * "verbose done"/"site tag done"). The verbose pr_info() has been seen
-	 * to wedge at the return path after ltr() while the file markers keep
-	 * flowing, so skip console logging for this diagnostic call entirely.
+	 * SITE_TAG already has two dmesg markers ("upcall logged" and
+	 * "verbose done"/"site tag done"). Keep the noisy pr_info() + file
+	 * pair below for other calls only; for SITE_TAG it is redundant and
+	 * its file write is what stalled the trace.
 	 */
-	if (log_upcall && call != LINUX64_CALL_SITE_TAG) {
+	if (log_upcall && !site_tag) {
 		pr_info("upcall: call=%lu a1=0x%lx a2=0x%lx "
 		    "preempt=0x%x nmi=%d irqoff=%d\n",
 		    call, a1, a2, preempt_count(), (int)in_nmi(),
@@ -155,11 +164,8 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		if (n > 0)
 			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
 	}
-	if (call == LINUX64_CALL_SITE_TAG) {
-		n = snprintf(buf, sizeof(buf), "hook: verbose done a1=0x%lx\n", a1);
-		if (n > 0)
-			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
-	}
+	if (site_tag)
+		printk(KERN_DEBUG "fki-x86: hook: verbose done a1=0x%lx\n", a1);
 
 	switch (call) {
 	case LINUX64_CALL_IDLE:
@@ -263,13 +269,10 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		return 0;
 
 	case LINUX64_CALL_SITE_TAG:
-		/* Host-only breadcrumb from a patched XNU site. The entry is
-		 * already written above; log the exit too, synchronously, so a
-		 * deadlock in fki_x86_enter() still leaves a complete trace
-		 * without depending on the phase logger thread. */
-		n = snprintf(buf, sizeof(buf), "site tag done a1=0x%lx\n", a1);
-		if (n > 0)
-			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+		/* Host-only breadcrumb from a patched XNU site. All three
+		 * markers go to dmesg, not the file trace: a second file write
+		 * in this path can stall with the world switch in progress. */
+		printk(KERN_DEBUG "fki-x86: site tag done a1=0x%lx\n", a1);
 		return 0;
 
 	default:
