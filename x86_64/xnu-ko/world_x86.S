@@ -506,6 +506,99 @@ xnu_world_site7_probe_x86:
 	.size	xnu_world_site7_probe_x86, . - xnu_world_site7_probe_x86
 
 /*
+ * Breadcrumbs through i386_init(). After site7 the vstart() trace stops until
+ * the first kprintf, so each stub logs at an instruction boundary, replays the
+ * overwritten instructions (and any whole instructions up to the resume point),
+ * then jumps past the 13-byte patch window. %r11 is scratch as everywhere else.
+ */
+	.globl xnu_world_i386_p76_x86
+	.type  xnu_world_i386_p76_x86, @function
+xnu_world_i386_p76_x86:
+	endbr64
+	SITE_PROBE 76		/* i386_init entry */
+	pushq	%rbp
+	movq	%rsp, %rbp
+	pushq	%r15
+	pushq	%r14
+	pushq	%rbx
+	subq	$0x18, %rsp
+	movabsq	$0xffffff80004f000d, %r11
+	jmp	*%r11
+	.size	xnu_world_i386_p76_x86, . - xnu_world_i386_p76_x86
+
+	.globl xnu_world_i386_p77_x86
+	.type  xnu_world_i386_p77_x86, @function
+xnu_world_i386_p77_x86:
+	endbr64
+	SITE_PROBE 77		/* before pal_i386_init/tsc_init/rtclock_early_init */
+	movl	$0, -0x24(%rbp)
+	movabsq	$0xffffff80004e19d0, %r11
+	call	*%r11
+	movabsq	$0xffffff8000503d50, %r11
+	call	*%r11
+	movabsq	$0xffffff80004fe870, %r11
+	call	*%r11
+	movabsq	$0xffffff80004f0023, %r11
+	jmp	*%r11
+	.size	xnu_world_i386_p77_x86, . - xnu_world_i386_p77_x86
+
+	.globl xnu_world_i386_p78_x86
+	.type  xnu_world_i386_p78_x86, @function
+xnu_world_i386_p78_x86:
+	endbr64
+	SITE_PROBE 78		/* before kernel_debug_string_early/mca_cpu_init */
+	movabsq	$0xffffff8000cb5fc9, %rdi
+	movabsq	$0xffffff800085cb90, %r11
+	call	*%r11
+	movabsq	$0xffffff80004f8e20, %r11
+	call	*%r11
+	movabsq	$0xffffff80004f0034, %r11
+	jmp	*%r11
+	.size	xnu_world_i386_p78_x86, . - xnu_world_i386_p78_x86
+
+	.globl xnu_world_i386_p79_x86
+	.type  xnu_world_i386_p79_x86, @function
+xnu_world_i386_p79_x86:
+	endbr64
+	SITE_PROBE 79		/* mca_cpu_init returned */
+	movabsq	$0xffffff800111b8b8, %rax
+	movl	$0, (%rax)
+	movabsq	$0xffffff80004f0041, %r11
+	jmp	*%r11
+	.size	xnu_world_i386_p79_x86, . - xnu_world_i386_p79_x86
+
+	.globl xnu_world_i386_p80_x86
+	.type  xnu_world_i386_p80_x86, @function
+xnu_world_i386_p80_x86:
+	endbr64
+	SITE_PROBE 80		/* before bootstrap/timer/cpu/init_upto */
+	movabsq	$0xffffff8000b8ebc8, %r11
+	call	*%r11
+	movabsq	$0xffffff800035d800, %r11
+	call	*%r11
+	movabsq	$0xffffff80004e4fe0, %r11
+	call	*%r11
+	movl	$4, %edi
+	movabsq	$0xffffff8000b8ec74, %r11
+	call	*%r11
+	movabsq	$0xffffff80004f0066, %r11
+	jmp	*%r11
+	.size	xnu_world_i386_p80_x86, . - xnu_world_i386_p80_x86
+
+	.globl xnu_world_i386_p81_x86
+	.type  xnu_world_i386_p81_x86, @function
+xnu_world_i386_p81_x86:
+	endbr64
+	SITE_PROBE 81		/* before kprintf("kprintf initialized\\n") */
+	movabsq	$0xffffff8000cb5fec, %rdi
+	xorl	%eax, %eax
+	movabsq	$0xffffff8000b4f490, %r11
+	call	*%r11
+	movabsq	$0xffffff80004f0074, %r11
+	jmp	*%r11
+	.size	xnu_world_i386_p81_x86, . - xnu_world_i386_p81_x86
+
+/*
  * Breadcrumbs inside cpu_desc_load().  The hang after 0x41 is inside this
  * function (the stack still holds the return address after the stub's
  * `call cpu_desc_load`), so split the 13-byte patches at instruction boundaries and

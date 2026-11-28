@@ -832,6 +832,70 @@ static int write_xnu_globals(void)
 					}
 				}
 
+				/* site7 now returns all the way through cpu_desc_load()
+				 * and cpu_syscall_init(). The next silence is inside
+				 * i386_init(); bracket the calls up to the first kprintf
+				 * with instruction-boundary 13-byte windows. Each stub
+				 * replays enough whole instructions to resume past the
+				 * end of its own window. */
+				{
+					u64_t a_iinit = macho_x86_sym(&img, "_i386_init");
+
+					static const struct {
+						u64_t off;
+						u8 id;
+						const u8 expect[13];
+						void (*probe)(void);
+					} iinit_sites[] = {
+					    { 0x000, 76, {
+						0x55, 0x48, 0x89, 0xe5, 0x41, 0x57,
+						0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x18 },
+						    xnu_world_i386_p76_x86 },
+					    { 0x00d, 77, {
+						0xc7, 0x45, 0xdc, 0x00, 0x00, 0x00,
+						0x00, 0xe8, 0xb7, 0x19, 0xff, 0xff, 0xe8 },
+						    xnu_world_i386_p77_x86 },
+					    { 0x023, 78, {
+						0x48, 0x8d, 0x3d, 0x9f, 0x5f, 0x7c,
+						0x00, 0xe8, 0x61, 0xcb, 0x36, 0x00, 0xe8 },
+						    xnu_world_i386_p78_x86 },
+					    { 0x034, 79, {
+						0x48, 0x8d, 0x05, 0x7d, 0xb8, 0xc2,
+						0x00, 0xc7, 0x00, 0x00, 0x00, 0x00, 0x00 },
+						    xnu_world_i386_p79_x86 },
+					    { 0x04d, 80, {
+						0xe8, 0x76, 0xeb, 0x69, 0x00, 0xe8,
+						0xa9, 0xd7, 0xe6, 0xff, 0xe8, 0x84, 0x4f },
+						    xnu_world_i386_p80_x86 },
+					    { 0x066, 81, {
+						0x48, 0x8d, 0x3d, 0x7f, 0x5f, 0x7c,
+						0x00, 0x31, 0xc0, 0xe8, 0x1c, 0xf4, 0x65 },
+						    xnu_world_i386_p81_x86 },
+					};
+					unsigned int s;
+
+					if (!a_iinit)
+						pr_warn("xnu86: _i386_init not found\n");
+					for (s = 0; a_iinit && s < ARRAY_SIZE(iinit_sites); s++) {
+						u8 *at = xnu_va_to_host(a_iinit +
+						    iinit_sites[s].off);
+
+						if (at && !memcmp(at, iinit_sites[s].expect,
+						    sizeof(iinit_sites[s].expect))) {
+							write_abs_jmp(at,
+							    (unsigned long)(uintptr_t)
+							    iinit_sites[s].probe);
+							debugf("xnu86: i386_init site %u at 0x%llx\n",
+							    iinit_sites[s].id,
+							    (unsigned long long)
+							    (a_iinit + iinit_sites[s].off));
+						} else {
+							pr_warn("xnu86: i386_init site %u pattern not found\n",
+							    iinit_sites[s].id);
+						}
+					}
+				}
+
 				/* Inside cpc_early_init(), which is the first call after
 				 * the KERNEL_TABLES upcall. */
 				{

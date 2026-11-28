@@ -51,10 +51,10 @@ and a separate project.
 - A working loader: kernel collection from `/lib/firmware/xnu26.kernel`,
   segment remap, synthesized boot args, symbol lookup and a call into `_vstart`.
 - `kprintf_probe=1` installs numbered `SITE_TAG` breadcrumbs around the early
-  boot path and replays the overwritten instructions. The first `kprintf`
-  upcall output has been observed; execution currently stops inside
-  `cpu_desc_load()`. See [boot debug notes](docs/boot-debug.md) for the probe
-  map and the interpretation of a trace.
+  boot path and replays the overwritten instructions. The descriptor path in
+  `cpu_desc_load()` and `cpu_syscall_init()` now completes; execution stops in
+  the early calls of `i386_init()`. See [boot debug notes](docs/boot-debug.md)
+  for the probe map and the interpretation of a trace.
 
 This is **instrumented early boot**, not a bootable macOS kernel. See
 `docs/audit.md` for the stage-2 checkpoint and the remaining porting work.
@@ -67,8 +67,8 @@ This is **instrumented early boot**, not a bootable macOS kernel. See
 3. Host loader `xnu-ko/xnu_main_x86.c`: KC from firmware, identity + XNU-half
    page tables, boot_args synthesis, symbol globals and `_vstart` entry. **Done**.
 4. Debug early `vstart()`/`i386_init()` with `kprintf_probe=1`. **Current step**:
-   the trace reaches descriptor setup and stops in `cpu_desc_load()`; next
-   milestone is `kprintf initialized`.
+   the trace passes descriptor setup and stops in `i386_init()`; next milestone
+   is `kprintf initialized`.
 5. Real interrupt/timer injection and full ring-3 execution.
 6. Implement host disk/ramdisk calls, then use a macOS 26 Intel disk to reach
    `launchd` and a shell.

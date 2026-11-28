@@ -43,8 +43,10 @@ sudo sh -c 'grep -E "upcall#|site tag done|hook:|xnu: panic|assertion failed|unh
 | `0x6`, `0x3f`, `0x40` | 6, 63, 64 | после `KERNEL_TABLES`, до/после `cpu_data_alloc()` |
 | `0x7`, `0x41`, `0x42` | 7, 65, 66 | `site7`: до `cpu_desc_init()`, после него, после `cpu_desc_load()` |
 | `0x43`–`0x46` | 67–70 | внутри `cpu_desc_load()`: GS/cdi, маска cdi, GDT/IDT, перед LDT/TSS |
-| `0x47`, `0x48` | 71, 72 | после `lldt`, после `ltr` (новый сплит, ещё не проверен загрузкой) |
-| `0x9` | 9 | продолжение `vstart()` после описанных выше вызовов |
+| `0x47`, `0x48` | 71, 72 | после `lldt`, после `ltr` (подтверждено загрузкой) |
+| `0x49`–`0x4b` | 73–75 | живые дескрипторы `KERNEL_LDT` и метка перед `ltr` |
+| `0x4c`–`0x52` | 76–81 | `i386_init()`: entry, pal/tsc/rtclock, debug/mca, boot_cpu_id, timer/cpu/init_upto, `kprintf initialized` |
+| `0x9` | 9 | продолжение `vstart()` после описанных выше вызовов (старая метка, сейчас перекрыта `site7`) |
 | `0x2d`, `0x3e` | 45, 62 | путь `cpuid_set_info()` / stub p44 |
 | `0x2f`, `0x30` | 47, 48 | старые метки `cpc_early_init()` |
 
@@ -68,40 +70,42 @@ sudo sh -c 'grep -E "upcall#|site tag done|hook:|xnu: panic|assertion failed|unh
 
 ## Что видно сейчас
 
-Последний trace (модули `21ce2cb…`/`48181ad…`) показал:
+Последний trace (модули `06fe299…`/`9c98043…`) прошёл весь путь дескрипторов:
 
 ```text
-a1=0x49 a2=0xf614f6142bc92bc9
-a1=0x4a a2=0xcbb0cbb6a226a22
+upcall#78 a1=0x48     /* ltr вернулся */
+upcall#79 a1=0x42     /* cpu_desc_load() вернулся */
+upcall#80 a1=0x8      /* cpu_syscall_init() вернулся, site7 завершён */
 ```
 
-Это мусор, а не дескриптор `KERNEL_LDT`. Причина найдена: `doublemap_init()`
-вычисляет физические адреса через `ID_MAP_VTOP(x) = x & 0xffffffff`, то есть
-предполагает, что образ ядра лежит по PA `0x1a6000`. Загрузчик же кладёт его
-по `kc_pa` (allocation в `fki_x86_shared_alloc`). Поэтому `cdi_gdtu.ptr`,
-`cdi_idtu.ptr`, `cdi_ldtu` и `cdi_ktssu` указывали в совсем другую физическую
-память, и `lgdt`/`lidt`/`lldt` работали с мусором.
+`hook: upcall logged`, `hook: verbose done` и `site tag done` есть для каждой
+метки — значит дедлок больше не в самом хуке и не на выходе из него. После
+`0x8` `site7` прыгает на `vstart+0xfd0`, который через `x86_init_wrapper()`
+вызывает `i386_init()`. В дампе стека виден возврат
+`0xffffff80004eeeb6` (после `call x86_init_wrapper`), поэтому остановка уже
+внутри `i386_init()` или в одном из его ранних вызовов.
 
-Исправление: `build_init_pt()` строит отдельное дерево для PML4[493], где
-`0xfffff68000000000 + off` отображается в `kc_pa + off` для первых `0xc4000`
-байт `__HIB`. `xnu_world_site1_probe_x86()` сразу после `doublemap_init()`
-заменяет `IdlePML4[493]` на это дерево, до того как XNU начнёт пользоваться
-DBLMAP-указателями.
+Раньше `doublemap_init()` вычислял физические адреса через
+`ID_MAP_VTOP(x) = x & 0xffffffff` и предполагал образ ядра по PA `0x1a6000`.
+Теперь `build_init_pt()` строит дерево PML4[493], где
+`0xfffff68000000000 + off` → `kc_pa + off` для первых `0xc4000` байт `__HIB`,
+а `site1` подменяет `IdlePML4[493]` сразу после `doublemap_init()`. Probe
+`0x49`/`0x4a` подтвердили корректный дескриптор LDT.
 
-Те же probes (`0x49`/`0x4a`/`0x4b`) оставлены: теперь `a2` должен быть
-правдоподобным дескриптором LDT (access `0x82`, base `0xfffff680000aa000`).
+Как читать следующий trace:
 
-Как читать trace:
+- `0x8` без `0x4c` — остановка между `site7` и entry в `i386_init()`;
+- `0x4c` без `0x4d` — остановка в прологе `i386_init()`;
+- `0x4d` без `0x4e` — `pal_i386_init()`, `tsc_init()` или `rtclock_early_init()`;
+- `0x4e` без `0x4f` — `kernel_debug_string_early("i386_init")` или
+  `mca_cpu_init()`;
+- `0x4f` без `0x50` — `kernel_debug_string_early("kernel_startup_bootstrap")`;
+- `0x50` без `0x52` — `kernel_startup_bootstrap()`, `timer_call_init()`,
+  `cpu_init()` или `kernel_startup_initialize_upto()`;
+- `0x52` плюс `KPRINTF: kprintf initialized` — цель достигнута.
 
-- `a2` с `0x49`/`0x4a` всё ещё мусор — дерево double-map не подключено;
-- `0x49`/`0x4a` без `0x47` — fault на `lldt`;
-- `0x47` без `0x4b`/`0x48` — fault на `ltr`;
-- `0x48` без `0x42` — возврат из `cpu_desc_load()` или повторный вход в XNU
-  после загрузки TSS. После `ltr` теперь сразу сбрасывается бит busy в
-  GDT[8]: иначе следующий `ltr` при возврате из хоста даёт `#GP`.
-
-Следующая цель после прохождения этого места — `kprintf("kprintf initialized\n")`
-в `i386_init()`.
+Следующая цель после этого — продолжение `i386_init()` и первые реальные
+upcall-ы к устройствам хоста.
 
 ## Что ещё не работает
 
