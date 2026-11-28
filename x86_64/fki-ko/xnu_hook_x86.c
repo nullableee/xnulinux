@@ -60,6 +60,20 @@ int xnu_hook_set_translate(xnu_hook_translate_fn fn)
 }
 EXPORT_SYMBOL(xnu_hook_set_translate);
 
+/* SITE_TAG markers go to the in-memory ring and to the file trace through
+ * fki_trace_push(), so the familiar `hook:`/`site tag done` lines stay in
+ * xnu-boot.log without any mutex or file I/O in the upcall path. */
+static void site_trace(const char *what, unsigned long a1)
+{
+	char b[96];
+	int n = snprintf(b, sizeof(b), "%s a1=0x%lx\n", what, a1);
+
+	if (n > 0) {
+		printk(KERN_DEBUG "fki-x86: %.*s", n, b);
+		fki_trace_push(b, min_t(int, n, sizeof(b) - 1));
+	}
+}
+
 static const char *fault_name(unsigned long v)
 {
 	switch (v) {
@@ -124,7 +138,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 	/* Fine-grained breadcrumbs for the SITE_TAG path: a tag can be logged
 	 * on entry and still wedge before the exit marker below. */
 	if (site_tag)
-		printk(KERN_DEBUG "fki-x86: hook: upcall logged a1=0x%lx\n", a1);
+		site_trace("hook: upcall logged", a1);
 
 	if (call == LINUX64_CALL_KPRINTF) {
 		const char *p = (const char *)(uintptr_t)hx(a1);
@@ -146,10 +160,9 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	fki_x86_phase_set(40, call);
 	/*
-	 * SITE_TAG already has two dmesg markers ("upcall logged" and
-	 * "verbose done"/"site tag done"). Keep the noisy pr_info() + file
-	 * pair below for other calls only; for SITE_TAG it is redundant and
-	 * its file write is what stalled the trace.
+	 * SITE_TAG already has two ring markers ("upcall logged" and
+	 * "verbose done"/"site tag done"). Keep the noisy pr_info() pair
+	 * below for other calls only.
 	 */
 	if (log_upcall && !site_tag) {
 		pr_info("upcall: call=%lu a1=0x%lx a2=0x%lx "
@@ -163,7 +176,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 			fki_trace_push(buf, min_t(int, n, sizeof(buf) - 1));
 	}
 	if (site_tag)
-		printk(KERN_DEBUG "fki-x86: hook: verbose done a1=0x%lx\n", a1);
+		site_trace("hook: verbose done", a1);
 
 	switch (call) {
 	case LINUX64_CALL_IDLE:
@@ -267,10 +280,8 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		return 0;
 
 	case LINUX64_CALL_SITE_TAG:
-		/* Host-only breadcrumb from a patched XNU site. All three
-		 * markers go to dmesg, not the file trace: a second file write
-		 * in this path can stall with the world switch in progress. */
-		printk(KERN_DEBUG "fki-x86: site tag done a1=0x%lx\n", a1);
+		/* Host-only breadcrumb from a patched XNU site. */
+		site_trace("site tag done", a1);
 		return 0;
 
 	default:
