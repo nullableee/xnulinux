@@ -32,7 +32,9 @@
 #include <linux/module.h>
 #include <linux/preempt.h>
 #include <linux/printk.h>
+#include <linux/proc_fs.h>
 #include <linux/random.h>
+#include <linux/seq_file.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
@@ -438,9 +440,14 @@ static DEFINE_MUTEX(fki_debug_lock);
 volatile unsigned long fki_x86_phase;
 volatile unsigned long fki_x86_phase_arg;
 volatile unsigned long xnu_site3_hook_pre;
+/* Plain-store progress inside xnu_hook_x86(), readable live from another CPU
+ * via /proc/fki_x86_live. 1 entry, 2 upcall line queued, 3 first site mark,
+ * 4 verbose mark, 5 SITE_TAG case, 6 SITE_TAG mark done. */
+volatile unsigned long fki_x86_hook_stage;
 EXPORT_SYMBOL(fki_x86_phase);
 EXPORT_SYMBOL(fki_x86_phase_arg);
 EXPORT_SYMBOL(xnu_site3_hook_pre);
+EXPORT_SYMBOL(fki_x86_hook_stage);
 
 /* From xnu_hook_x86.c: upcalls are counted even when their log lines are
  * rate-limited, so a stable phase can be told apart from a long XNU run. */
@@ -1067,6 +1074,33 @@ EXPORT_SYMBOL(fki_thread_wake);
 
 static void *fki_phase_thread;
 
+/*
+ * Live snapshot for a wedged insmod: plain stores only, no I/O in the hook,
+ * and readable from any other CPU even when the file logger is stuck.
+ */
+static int fki_live_show(struct seq_file *m, void *v)
+{
+	seq_printf(m,
+	    "phase=%lu phase_arg=0x%lx hook_stage=%lu "
+	    "upcalls=%lu last=0x%lx\n",
+	    READ_ONCE(fki_x86_phase), READ_ONCE(fki_x86_phase_arg),
+	    READ_ONCE(fki_x86_hook_stage), READ_ONCE(xnu_upcall_count),
+	    READ_ONCE(xnu_upcall_last));
+	return 0;
+}
+
+static int fki_live_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, fki_live_show, NULL);
+}
+
+static const struct proc_ops fki_live_ops = {
+	.proc_open	= fki_live_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static int __init fki_x86_init(void)
 {
 	int cpu, logger_cpu;
@@ -1078,6 +1112,13 @@ static int __init fki_x86_init(void)
 	}
 	fki_hostcall_init();
 	fki_debug_init();
+	/* The file is append-only, so tag each run with the build that wrote it. */
+	{
+		const char *mark = "fki-x86: BUILD 14532f4+live lock-free hook trace\n";
+
+		fki_debug_log(mark, strlen(mark));
+	}
+	proc_create("fki_x86_live", 0444, NULL, &fki_live_ops);
 	/*
 	 * Keep the phase logger off the CPU that insmod (and therefore the
 	 * hosted run) uses; that CPU runs with IRQs off while we are in XNU.
@@ -1093,6 +1134,7 @@ static int __init fki_x86_init(void)
 
 static void __exit fki_x86_exit(void)
 {
+	remove_proc_entry("fki_x86_live", NULL);
 	fki_x86_phase_set(0, 0);
 	if (fki_phase_thread)
 		fki_thread_stop(fki_phase_thread);

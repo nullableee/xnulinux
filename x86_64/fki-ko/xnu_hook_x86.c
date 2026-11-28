@@ -36,6 +36,7 @@ MODULE_LICENSE("GPL");
 static unsigned long n_fault, n_user_enter, n_panic, n_assert;
 static unsigned long last_kprintf_log, n_upcall_trace;
 static xnu_hook_translate_fn hook_translate;
+extern volatile unsigned long fki_x86_hook_stage;
 
 /* Seen by the phase logger even when KPRINTF lines are rate-limited. */
 unsigned long xnu_upcall_count;
@@ -96,6 +97,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	xnu_upcall_last = call;
 	xnu_upcall_count++;
+	fki_x86_hook_stage = 1;
 
 	/*
 	 * Compact file trace of every upcall. The rate limit below only
@@ -134,11 +136,14 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 			fki_trace_push(buf, min_t(int, n, sizeof(buf) - 1));
 		}
 	}
+	fki_x86_hook_stage = 2;
 
 	/* Fine-grained breadcrumbs for the SITE_TAG path: a tag can be logged
 	 * on entry and still wedge before the exit marker below. */
-	if (site_tag)
+	if (site_tag) {
 		site_trace("hook: upcall logged", a1);
+		fki_x86_hook_stage = 3;
+	}
 
 	if (call == LINUX64_CALL_KPRINTF) {
 		const char *p = (const char *)(uintptr_t)hx(a1);
@@ -175,8 +180,10 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		if (n > 0)
 			fki_trace_push(buf, min_t(int, n, sizeof(buf) - 1));
 	}
-	if (site_tag)
+	if (site_tag) {
 		site_trace("hook: verbose done", a1);
+		fki_x86_hook_stage = 4;
+	}
 
 	switch (call) {
 	case LINUX64_CALL_IDLE:
@@ -281,7 +288,9 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 
 	case LINUX64_CALL_SITE_TAG:
 		/* Host-only breadcrumb from a patched XNU site. */
+		fki_x86_hook_stage = 5;
 		site_trace("site tag done", a1);
+		fki_x86_hook_stage = 6;
 		return 0;
 
 	default:
