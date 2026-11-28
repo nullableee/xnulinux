@@ -11,6 +11,7 @@
 #include "fki.h"
 #include "fki_internal.h"
 
+#include <linux/atomic.h>
 #include <linux/completion.h>
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
@@ -36,6 +37,7 @@
 #include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/spinlock.h>
+#include <linux/string.h>
 #include <linux/timekeeping.h>
 #include <linux/vmalloc.h>
 
@@ -502,6 +504,8 @@ static const char *fki_phase_name(unsigned long p)
 	}
 }
 
+static void fki_trace_drain(void);
+
 static int fki_phase_logger(void *unused)
 {
 	unsigned long last = READ_ONCE(fki_x86_phase);
@@ -527,16 +531,85 @@ static int fki_phase_logger(void *unused)
 			last = p;
 			tick = 0;
 		}
+		/* Drain hook lines from this CPU, never from the upcall CPU. */
+		fki_trace_drain();
 		fki_msleep(5);
 	}
 	return 0;
 }
 
-int fki_debug_log(const char *s, unsigned long len)
+static int fki_debug_log_file(const char *s, unsigned long len)
 {
 	loff_t pos;
 	ssize_t n;
 
+	if (!s || !len)
+		return 0;
+	mutex_lock(&fki_debug_lock);
+	if (!fki_debug_file) {
+		mutex_unlock(&fki_debug_lock);
+		return -ENOENT;
+	}
+	pos = fki_debug_off;
+	n = kernel_write(fki_debug_file, s, len, &pos);
+	if (n > 0)
+		fki_debug_off += n;
+	/* No vfs_fsync(): kernel_write() already makes the line visible in the
+	 * page cache, and fsync() would hold this mutex across storage I/O. */
+	mutex_unlock(&fki_debug_lock);
+	return n < 0 ? n : 0;
+}
+
+/*
+ * Upcall trace ring. xnu_hook_x86() runs with the foreign world's state live;
+ * a mutex_lock() there can block on fki_debug_lock held by the phase logger
+ * inside kernel_write(), wedging the single CPU that owns the run. The hook
+ * now only reserves a slot and memcpy()s; the logger drains the ring in
+ * ordinary context. Nothing here can sleep.
+ */
+#define FKI_TRACE_SLOTS	1024
+#define FKI_TRACE_LINE	256
+static char fki_trace_lines[FKI_TRACE_SLOTS][FKI_TRACE_LINE];
+static u16 fki_trace_lens[FKI_TRACE_SLOTS];
+static u8 fki_trace_ready[FKI_TRACE_SLOTS];
+static atomic_t fki_trace_seq = ATOMIC_INIT(0);
+static unsigned int fki_trace_drained;
+
+void fki_trace_push(const char *s, unsigned long len)
+{
+	unsigned int slot;
+
+	if (!s || !len)
+		return;
+	slot = (unsigned int)atomic_inc_return(&fki_trace_seq);
+	slot &= FKI_TRACE_SLOTS - 1;
+	if (len >= FKI_TRACE_LINE)
+		len = FKI_TRACE_LINE - 1;
+	memcpy(fki_trace_lines[slot], s, len);
+	fki_trace_lens[slot] = (u16)len;
+	smp_wmb();
+	WRITE_ONCE(fki_trace_ready[slot], 1);
+}
+EXPORT_SYMBOL(fki_trace_push);
+
+static void fki_trace_drain(void)
+{
+	unsigned int end = (unsigned int)atomic_read(&fki_trace_seq);
+
+	while (fki_trace_drained < end) {
+		unsigned int slot = fki_trace_drained & (FKI_TRACE_SLOTS - 1);
+
+		if (!READ_ONCE(fki_trace_ready[slot]))
+			break;
+		fki_debug_log_file(fki_trace_lines[slot],
+		    fki_trace_lens[slot]);
+		WRITE_ONCE(fki_trace_ready[slot], 0);
+		fki_trace_drained++;
+	}
+}
+
+int fki_debug_log(const char *s, unsigned long len)
+{
 	if (!s || !len)
 		return 0;
 	/*
@@ -549,25 +622,7 @@ int fki_debug_log(const char *s, unsigned long len)
 		printk(KERN_INFO "fki-x86: %.*s\n", (int)len, s);
 		return 0;
 	}
-	mutex_lock(&fki_debug_lock);
-	if (!fki_debug_file) {
-		mutex_unlock(&fki_debug_lock);
-		return -ENOENT;
-	}
-	pos = fki_debug_off;
-	n = kernel_write(fki_debug_file, s, len, &pos);
-	if (n > 0)
-		fki_debug_off += n;
-	/*
-	 * No vfs_fsync() here. kernel_write() already makes the line visible in
-	 * the page cache, which is all the boot trace needs. fsync() keeps the
-	 * debug mutex while it waits on storage; an XNU upcall then blocks on
-	 * this mutex with the foreign world state still live, and the trace
-	 * stops between two consecutive file markers (we just saw exactly that
-	 * after "upcall#78" and before "hook: upcall logged").
-	 */
-	mutex_unlock(&fki_debug_lock);
-	return n < 0 ? n : 0;
+	return fki_debug_log_file(s, len);
 }
 EXPORT_SYMBOL(fki_debug_log);
 

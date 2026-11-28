@@ -109,17 +109,15 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 			    xnu_upcall_count, call, xnu_upcall_ret, a1, a2);
 		}
 		if (n > 0) {
-			/* SITE_TAG breadcrumbs must not touch the file path at
-			 * all: kernel_write() can block on dirty-page throttling
-			 * or the debug mutex while the foreign XNU state is live,
-			 * and we just watched the trace stop between two file
-			 * markers. KERN_DEBUG goes only to the in-memory dmesg
-			 * ring (console_loglevel is 4), so it cannot stall on
-			 * storage. */
+			/* Nothing in the upcall path may take fki_debug_lock or
+			 * call kernel_write(): the logger thread can own that
+			 * mutex while the foreign world's state is live here,
+			 * and the run wedges on the next line. SITE_TAG also
+			 * goes to dmesg so its three markers survive even if
+			 * the logger thread is not scheduled. */
 			if (site_tag)
 				printk(KERN_DEBUG "fki-x86: %.*s", n, buf);
-			else
-				fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+			fki_trace_push(buf, min_t(int, n, sizeof(buf) - 1));
 		}
 	}
 
@@ -162,7 +160,7 @@ long xnu_hook_x86(unsigned long call, unsigned long a1, unsigned long a2)
 		n = snprintf(buf, sizeof(buf),
 		    "upcall: call=%lu a1=0x%lx a2=0x%lx\n", call, a1, a2);
 		if (n > 0)
-			fki_debug_log(buf, min_t(int, n, sizeof(buf) - 1));
+			fki_trace_push(buf, min_t(int, n, sizeof(buf) - 1));
 	}
 	if (site_tag)
 		printk(KERN_DEBUG "fki-x86: hook: verbose done a1=0x%lx\n", a1);

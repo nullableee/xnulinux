@@ -117,6 +117,10 @@ long fki_file_rw(void *file, int write, void *buf, unsigned long len, fki_u64 of
 void fki_file_close(void *file);
 /* Write to a host file from ordinary Linux context (a host thread, not inside fki_x86_enter()); bytes written or -errno. */
 long fki_file_pwrite(void *file, const void *buf, unsigned long len, fki_u64 off);
+/* Lockless trace push from the upcall hook: memcpy into a ring slot, no
+ * mutex, no file I/O, safe with IRQs/preemption off. The phase logger kthread
+ * drains the ring to the boot log. */
+void fki_trace_push(const char *s, unsigned long len);
 /*
  * A host call (from inside fki_x86_enter()): len bytes at req to the Linux service reading /dev/xnu-hostcall, its reply into
  * reply (at most max bytes). Returns the reply's length or a negative errno (-ETIMEDOUT: no service answered).
